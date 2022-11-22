@@ -1,0 +1,97 @@
+{
+  "manifest_version": 2,
+  "name": "__MSG_extensionName__",
+  "version": "1.2.11",
+  "homepage_url": "https://github.com/jakwings/firefox-screenshot",
+
+  "description": "__MSG_extensionDescription__",
+
+  "applications": {
+    "gecko": {
+      "id": "{49bd4b24-e5b9-4238-a241-3487486f9236}",
+      "update_url": "https://github.com/jakwings/firefox-screenshot/raw/update/update.json",
+      "strict_min_version": "56.0"
+    }
+  },
+
+  "icons": {
+    "24": "icons/savescreenshot.svg",
+    "48": "icons/savescreenshot.svg",
+    "96": "icons/savescreenshot.svg"
+  },
+
+  "background": {
+    "scripts": [
+      "utils/storage.js",
+      "_globals.js",
+      "lib/crc32.js",
+      "imagecomments.js",
+      "background.js"
+    ]
+  },
+
+  "browser_action": {
+    "default_icon": "icons/savescreenshot.svg",
+    "browser_style": true,
+    "default_popup": "popup/choose_format.html",
+    "theme_icons": [{
+      "dark": "icons/savescreenshot.svg",
+      "light": "icons/savescreenshot-light.svg",
+      "size": 19
+    }]
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["utils/storage.js", "contentscript.js"]
+    }
+  ],
+
+  "options_ui": {
+    "page": "options.html",
+    "browser_style": true
+  },
+
+  "commands": {
+    "full-png": {
+      "description": "__MSG_region_full_label__ (PNG)"
+    },
+    "full-jpg": {
+      "description": "__MSG_region_full_label__ (JPEG)"
+    },
+    "full-copy": {
+      "description": "__MSG_region_full_label__ (__MSG_format_copy_label__)"
+    },
+    "viewport-png": {
+      "description": "__MSG_region_viewport_label__ (PNG)"
+    },
+    "viewport-jpg": {
+      "description": "__MSG_region_viewport_label__ (JPEG)"
+    },
+    "viewport-copy": {
+      "description": "__MSG_region_viewport_label__ (__MSG_format_copy_label__)"
+    },
+    "selection-png": {
+      "description": "__MSG_region_selection_label__ (PNG)"
+    },
+    "selection-jpg": {
+      "description": "__MSG_region_selection_label__ (JPEG)"
+    },
+    "selection-copy": {
+      "description": "__MSG_region_selection_label__ (__MSG_format_copy_label__)"
+    }
+  },
+
+  "permissions": [
+    "<all_urls>",
+    "contextMenus",
+    "notifications",
+    "storage",
+    "tabs",
+    "downloads",
+    "clipboardWrite"
+  ],
+
+  "default_locale": "en"
+}

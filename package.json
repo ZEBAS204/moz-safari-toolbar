@@ -1,0 +1,14 @@
+{
+  "webExt": {
+    "build": {
+      "filename": "firefox-screenshot.xpi"
+    },
+    "sign": {
+      "channel": "unlisted"
+    },
+    "ignoreFiles": [
+      "web-ext-artifacts",
+      "**/.*"
+    ]
+  }
+}
