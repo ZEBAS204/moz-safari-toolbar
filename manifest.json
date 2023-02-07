@@ -85,12 +85,13 @@
 
   "permissions": [
     "<all_urls>",
+    "clipboardWrite",
     "contextMenus",
+    "downloads",
     "notifications",
     "storage",
     "tabs",
-    "downloads",
-    "clipboardWrite"
+    "theme"
   ],
 
   "default_locale": "en"

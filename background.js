@@ -204,10 +204,11 @@ async function TakeScreenshot(req, tab) {
     let content = null;
     if (one_canvas) {
       let canvas = document.createElement('canvas');
-      content = canvas.getContext('2d', {alpha: false});
+      content = canvas.getContext('2d', {alpha: true});
       canvas.width = totalWidth;
       canvas.height = totalHeight;
-      content.imageSmoothingEnabled = true;
+      content.imageSmoothingEnabled = false; //! Final image will be blurred
+      content.filter = 'blur(10px)'; //! Final image will be blurred
     } else {
       // TODO: new ImageWriter('avif'); // grid/overlay derivation
       // TODO: new ImageWriter('tiff'); URL.createObjectURL(new Blob([...tiff_strips]))
@@ -567,10 +568,10 @@ async function TakeScreenshot(req, tab) {
                 DebugDraw(content, {x, y, w, h, scale, n});
               } else {
                 let canvas = document.createElement('canvas');
-                let ctx = canvas.getContext('2d', {alpha: false});
+                let ctx = canvas.getContext('2d', {alpha: true});
                 canvas.width = Math.trunc(w * scale);
                 canvas.height = Math.trunc(h * scale);
-                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingEnabled = false;
                 ctx.drawImage(img, pos.x * scl_w, pos.y * scl_h, w * scl_w, h * scl_h,
                                                0,             0, w * scale, h * scale);
                 DebugDraw(ctx, {x:0, y:0, w, h, scale, n});
@@ -601,6 +602,10 @@ async function TakeScreenshot(req, tab) {
 
     await decoding.parallel();
     if (one_canvas) {
+      //console.log("BASE64 IMG:\n", content.canvas.toDataURL("image/jpeg"));
+      applyTheme(tab.windowId, content.canvas.toDataURL("image/png"))
+      //* -----------------------------------------------------------------------------------------------------
+      //* -----------------------------------------------------------------------------------------------------
       content = await (await fetch(content.canvas.toDataURL())).arrayBuffer();
     } else {
       const lock_time = 1000 * 60 * 15;
@@ -641,11 +646,20 @@ async function TakeScreenshot(req, tab) {
 
     // Handle copy to clipboard
     if (req.format === 'copy') {
+      /*
+      ! Instead of copying the image, open a new window and
+      ! place the image to debug
       await browser.clipboard.setImageData(content, format[1]);
       if (prefs.copynotification) {
         notify(T$('info_screenshot_copied'), {id: nid});
       }
-    }
+      */
+      await browser.tabs.sendMessage(tab.id, {
+        type: 'TriggerOpen',
+        content: new Blob([content], {type: format[2]}),
+        filename: 'about:blank',
+      });
+  }
 
     // All other data formats have to be handled as downloads
     else {
@@ -841,6 +855,22 @@ async function MigrateSettings() {
     await Storage.remove("format");
   }
   await Storage.set(newprefs);
+}
+const buffer = []
+function applyTheme(tabID, base64Url) {
+  buffer.push(base64Url) // Push as last element
+  if (buffer.length === 3) {
+    buffer.shift() // Pop first element
+  }
+  const theme = {
+    images: {
+      additional_backgrounds: [...buffer],
+      additional_backgrounds_alignment: "left top",
+      additional_backgrounds_tiling: "no-repeat",
+      color_scheme: 'auto'
+    },
+  }
+  browser.theme.update(tabID, theme);
 }
 
 async function Startup() {

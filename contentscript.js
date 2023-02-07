@@ -272,36 +272,75 @@ function SaveScreenshot({region, left, top, width, height, format}) {
 
 // Triggers a download.
 async function TriggerOpen(content, filename) {
-  let url = URL.createObjectURL(content);
-  let a = document.createElement('a');
-  try {
-    a.href = url;
-    a.download = filename;
-    a.hidden = true;
-    a.style.display = 'none';
-    a.style.position = 'fixed';
-    a.style.top = '100vh';
-    // necessary for Firefox 57
-    (document.body || document.documentElement).appendChild(a);
-    a.click();
-  } finally {
-    URL.revokeObjectURL(url);
-    a.remove();
+  return;
+  const url = URL.createObjectURL(content);
+  const elemID = 'FF_screenshot'
+
+  const thisDocument = (document.body || document.documentElement)
+  const query = thisDocument.querySelector(`#${elemID}`)
+  console.log('query():', query)
+  if (query) {
+      console.log('query(): updating url', query)
+      query.src = url;
+      return
   }
+  
+  const elem = document.createElement('img');
+  // console.log('TRIGGER OPEN', content)
+  try {
+    addStylesToElement(elemID)
+    elem.src = url;
+    elem.id = elemID;
+    
+    // elem.download = filename;
+    // // a.hidden = true;
+    // // a.style.display = 'none';
+    // necessary for Firefox 57
+    thisDocument.appendChild(elem);
+    
+    //a.click();
+  } catch (err) {
+    console.error('Error elemen:', err)
+  }// finally {
+  //   URL.revokeObjectURL(url);
+  //   a.remove();
+  // }
 }
+
+function addStylesToElement(elemID) {
+  const style = document.createElement('style');
+  (document.body || document.documentElement).appendChild(style);
+    
+  style.textContent = `
+  #${elemID} {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 80px !important;
+    z-index: 999999999 !important;
+    pointer-events: none !important;
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }`;
+  console.log('addStylesToElement(): Created element styles');
+}
+
 
 
 // https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/drawWindow
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toDataURL
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob
 async function DrawWindow(req) {
+  console.log('drawWindow AAAAAAAAAAAAAAAAAAAA')
   let canvas = document.createElement('canvas');
   let ctx = canvas.getContext('2d', {alpha: false});
   let {format, quality, rect: {x, y, width, height}} = req;
   quality = (format === 'image/jpeg' ? quality / 100 : 1);
   canvas.width = Math.trunc(width);
   canvas.height = Math.trunc(height);
-  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingEnabled = false; // The final will be blurried, save time
+  ctx.filter = 'blur(10px)';
   ctx.drawWindow(window, x, y, width, height, 'rgba(255,0,255,1)');
   return canvas.toDataURL(format, quality);
   //// Security Error: Content at moz-extension://<uuid>/background.html may not
@@ -321,6 +360,37 @@ async function DrawWindow(req) {
   //});
 }
 
+function setupDynamicEventUpdates() {
+    console.log('setupDynamicEventUpdates()')
+		document.addEventListener("animationend", screenshotPage);
+		document.addEventListener("animationcancel", screenshotPage);
+		document.addEventListener("pageshow", screenshotPage);
+		document.addEventListener("click", screenshotPage);
+		document.addEventListener("resize", screenshotPage);
+		document.addEventListener("scroll", screenshotPage);
+		document.addEventListener("transitionend", screenshotPage);
+		document.addEventListener("transitioncancel", screenshotPage);
+		document.addEventListener("visibilitychange", screenshotPage);
+}
+
+function screenshotPage(event) {
+  if (document.fullscreenElement) return;
+  const i = GetPageInfo();
+
+  SaveScreenshot({
+    region: 'selection',
+    // Region selection
+    left: i.dx > 0 ? i.sx : i.sw + i.sx - i.cw,
+    top: i.dy > 0 ? i.sy : i.sh + i.sy - i.ch,
+    // excluding scrollbar width/height
+    width: i.sw,
+    height: 80, // 80px is the default height of the navigator-toolbox
+    format: 'jpg',
+  });
+}
+
+//! Init?
+setupDynamicEventUpdates()
 
 // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Content_scripts#communicating_with_background_scripts
 browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
