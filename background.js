@@ -865,10 +865,12 @@ function applyTheme(tabID, base64Url) {
   const theme = {
     images: {
       additional_backgrounds: [...buffer],
-      additional_backgrounds_alignment: "left top",
-      additional_backgrounds_tiling: "no-repeat",
-      color_scheme: 'auto'
     },
+    properties: {
+      additional_backgrounds_alignment: Array(buffer.length).fill("center top"),
+      // additional_backgrounds_tiling: Array(buffer.length).fill("no-repeat"), Already the default value
+      color_scheme: 'auto', // TODO: grab the color scheme of the theme?
+    }
   }
   browser.theme.update(tabID, theme);
 }
