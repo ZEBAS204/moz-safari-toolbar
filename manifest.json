@@ -3,7 +3,7 @@
   "name": "__MSG_extensionName__",
   "version": "1.2.11",
   "homepage_url": "https://github.com/jakwings/firefox-screenshot",
-
+  "incognito": "spanning",
   "description": "__MSG_extensionDescription__",
 
   "applications": {
@@ -85,9 +85,7 @@
 
   "permissions": [
     "<all_urls>",
-    "clipboardWrite",
     "contextMenus",
-    "downloads",
     "notifications",
     "storage",
     "tabs",
