@@ -316,12 +316,13 @@ function addStylesToElement(elemID) {
     position: fixed !important;
     inset: 0 !important;
     width: 100vw !important;
-    height: 80px !important;
+    height: 85px !important;
     z-index: 999999999 !important;
     pointer-events: none !important;
     animation: none !important;
     transition: none !important;
     transform: none !important;
+    image-rendering: optimizeSpeed;
   }`;
   console.log('addStylesToElement(): Created element styles');
 }
@@ -384,7 +385,7 @@ function screenshotPage(event) {
     top: i.dy > 0 ? i.sy : i.sh + i.sy - i.ch,
     // excluding scrollbar width/height
     width: i.sw,
-    height: 80, // 80px is the default height of the navigator-toolbox
+    height: 85, // 85px is the default height of the navigator-toolbox
     format: 'jpg',
   });
 }
