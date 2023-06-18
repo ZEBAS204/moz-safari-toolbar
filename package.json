@@ -10,5 +10,10 @@
       "web-ext-artifacts",
       "**/.*"
     ]
+  },
+  "devDependencies": {
+    "@types/firefox": "^0.0.31",
+    "@types/firefox-webext-browser": "^109.0.0",
+    "web-ext": "^7.5.0"
   }
 }
