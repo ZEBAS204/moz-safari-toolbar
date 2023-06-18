@@ -402,7 +402,7 @@ function screenshotPage(event) {
     top: i.dy > 0 ? i.sy : i.sh + i.sy - i.ch,
     // excluding scrollbar width/height
     width: i.sw,
-    height: 85, // 85px is the default height of the navigator-toolbox
+    height: 113, // 85px is the default height of the navigator-toolbox
     format: 'jpg',
   });
 }

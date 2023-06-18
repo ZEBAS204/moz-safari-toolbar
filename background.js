@@ -24,7 +24,7 @@ let DEBUG_DRAW = false;
 const browserAction = browser.browserAction;
 
 function DecodeImage$(url) {
-  let img = new Image();
+  const img = new Image();
   if (img.decode) {
     img.src = url;
     return img.decode().then(() => Promise.resolve(img));
@@ -204,14 +204,12 @@ async function TakeScreenshot(req, tab) {
     let content = null;
     if (one_canvas) {
       let canvas = document.createElement('canvas');
-      content = canvas.getContext('2d', {alpha: true});
-      canvas.width = totalWidth;
-      canvas.height = totalHeight;
+      content = canvas.getContext('2d', {alpha: false});
+      canvas.width = totalWidth + bw;
+      canvas.height = totalHeight + bh;
       content.imageSmoothingEnabled = false; //! Final image will be blurred
-      content.filter = 'blur(10px)'; //! Final image will be blurred
+      content.filter = 'blur(10px)'; // gaussian blur, later need to be reescaled to fix alpha blur offset
     } else {
-      // TODO: new ImageWriter('avif'); // grid/overlay derivation
-      // TODO: new ImageWriter('tiff'); URL.createObjectURL(new Blob([...tiff_strips]))
       try {
         let size = totalWidth * totalHeight * 4;
         if (size < Number.MAX_SAFE_INTEGER) {
@@ -509,51 +507,29 @@ async function TakeScreenshot(req, tab) {
             browserAction.setBadgeText({text: String(count--), tabId: tab.id});
           });
         }
-        let pos = null;
-        if (use_native) {
-          let _sx = dir.x > 0 ? left : Math.min(-(pw - left) + vw, vw - w);
-          let _sy = dir.y > 0 ? top : Math.min(-(ph - top) + vh, vh - h);
-          pos = {x: 0, y: 0};
-          if (BROWSER_VERSION_MAJOR >= 82) {
-            let opts = {
-              format: format[1],
-              quality: one_canvas ? quality : 100,
-              rect: {x: _sx, y: _sy, width: w, height: h},
-              scale: scale,
-            };
-            jobs.push(() => browser.tabs.captureTab(tab.id, opts));
-          } else {
-            // doesn't seem to support high dpi
-            let opts = {
-              type: 'DrawWindow',
-              format: format[2],
-              quality: one_canvas ? quality : 100,
-              rect: {x: _sx, y: _sy, width: w, height: h},
-            };
-            jobs.push(() => browser.tabs.sendMessage(tab.id, opts));
-          }
+        const _sx = dir.x > 0 ? left : Math.min(-(pw - left) + vw, vw - w);
+        const _sy = dir.y > 0 ? top : Math.min(-(ph - top) + vh, vh - h);
+        const pos = { x: 0, y: 0 };
+        
+        if (BROWSER_VERSION_MAJOR >= 82) {
+          const opts = {
+            format: format[1],
+            quality: one_canvas ? quality : 100,
+            rect: {x: _sx, y: _sy, width: w, height: h},
+            scale: scale,
+          };
+          jobs.push(() => browser.tabs.captureTab(tab.id, opts));
         } else {
-          let rect = {x: left, y: top, w, h};
-          jobs.push(async () => pos = await updateScrollPosition(rect));
-          if (false && BROWSER_VERSION_MAJOR >= 82) {
-            jobs.push(() => browser.tabs.captureTab(tab.id, {
-              format: format[1],
-              quality: 100,
-              // a fix for only when manually testing on newer browsers
-              scale: scale,
-            }));
-          } else if (BROWSER_VERSION_MAJOR >= 59) {
-            jobs.push(() => browser.tabs.captureTab(tab.id, {
-              format: format[1],
-              quality: one_canvas ? quality : 100,
-            }));
-          } else {
-            jobs.push(() => browser.tabs.captureVisibleTab(tab.windowId, {
-              format: format[1],
-              quality: one_canvas ? quality : 100,
-            }));
-          }
+          // doesn't seem to support high dpi
+          const opts = {
+            type: 'DrawWindow',
+            format: format[2],
+            quality: one_canvas ? quality : 100,
+            rect: {x: _sx, y: _sy, width: w, height: h},
+          };
+          jobs.push(() => browser.tabs.sendMessage(tab.id, opts));
         }
+        
         let rect = {x, y, w, h};
         jobs.push(url => {
           let n = ++debug_n;
@@ -562,13 +538,25 @@ async function TakeScreenshot(req, tab) {
               let {x, y, w, h} = rect;
               let scl_w = use_native ? scale : img.naturalWidth / (vw + bw);
               let scl_h = use_native ? scale : img.naturalHeight / (vh + bh);
+
+              const blurRadius = 10 * 2
+              // Doesn't matter if the image contains alpha or not, because we are applying gaussian blur,
+              // the drawn image edges will contract because of the applied blur.
+              // To prevent this, we scale the image a bit so that artifacts are not visible
+
               if (one_canvas) {
-                content.drawImage(img, pos.x * scl_w, pos.y * scl_h, w * scl_w, h * scl_h,
-                                           x * scale,     y * scale, w * scale, h * scale);
+                content.drawImage(img,
+                  // bw, bh are used to fix the removed scrollbar missing space
+                  pos.x * scl_w - bw - blurRadius,
+                  pos.y * scl_h - bh - blurRadius,
+                  w * scl_w + bw + blurRadius * 2,
+                  h * scl_h + bh + blurRadius * 2,
+                );
                 DebugDraw(content, {x, y, w, h, scale, n});
               } else {
+                console.warn('Using large canvas!')
                 let canvas = document.createElement('canvas');
-                let ctx = canvas.getContext('2d', {alpha: true});
+                let ctx = canvas.getContext('2d', {alpha: false});
                 canvas.width = Math.trunc(w * scale);
                 canvas.height = Math.trunc(h * scale);
                 ctx.imageSmoothingEnabled = false;
@@ -603,10 +591,9 @@ async function TakeScreenshot(req, tab) {
     await decoding.parallel();
     if (one_canvas) {
       //console.log("BASE64 IMG:\n", content.canvas.toDataURL("image/jpeg"));
-      applyTheme(tab.windowId, content.canvas.toDataURL("image/png"))
-      //* -----------------------------------------------------------------------------------------------------
-      //* -----------------------------------------------------------------------------------------------------
-      content = await (await fetch(content.canvas.toDataURL())).arrayBuffer();
+      const buff = await (await fetch(content.canvas.toDataURL("image/jpg", quality)));
+      applyTheme(tab.windowId, buff.url)
+      content = buff.arrayBuffer();
     } else {
       const lock_time = 1000 * 60 * 15;
       // worker is often cpu hog, just one is enough
@@ -619,8 +606,7 @@ async function TakeScreenshot(req, tab) {
           await browserAction.setBadgeBackgroundColor({color: 'green', tabId: tab.id});
         }
       }
-//console.time('worker');
-      // TODO: optional wasm support
+      console.time('worker');
       let worker = new Worker(
         format[1] === 'jpeg' ? 'lib/worker-jpeg.js' : 'lib/worker-png.js'
       );
@@ -640,98 +626,16 @@ async function TakeScreenshot(req, tab) {
       }).finally(() => {
         worker.terminate();
         mutex.unlock('worker');
+        console.timeEnd('worker');
       });
-//console.timeEnd('worker');
     }
 
-    // Handle copy to clipboard
-    if (req.format === 'copy') {
-      /*
-      ! Instead of copying the image, open a new window and
-      ! place the image to debug
-      await browser.clipboard.setImageData(content, format[1]);
-      if (prefs.copynotification) {
-        notify(T$('info_screenshot_copied'), {id: nid});
-      }
-      */
-      await browser.tabs.sendMessage(tab.id, {
-        type: 'TriggerOpen',
-        content: new Blob([content], {type: format[2]}),
-        filename: 'about:blank',
-      });
-  }
+    await browser.tabs.sendMessage(tab.id, {
+      type: 'TriggerOpen',
+      content: new Blob([await content], {type: format[2]}),
+      filename: 'about:blank',
+    });
 
-    // All other data formats have to be handled as downloads
-    else {
-      // Add image comment if we are allowed to
-      if (prefs.image_comment) {
-        content = await ApplyImageComment(content, tab.title, tab.url);
-      }
-
-      // The method "open" requires a temporary <a> hyperlink whose creation and
-      // handling has to be offloaded to our content script
-      if (prefs.savemethod === 'open') {
-        await browser.tabs.sendMessage(tab.id, {
-          type: 'TriggerOpen',
-          content: new Blob([content], {type: format[2]}),
-          filename: filename,
-        });
-      }
-      // All other download types are handled with the "browser.downloads" API
-      else {
-        let url = URL.createObjectURL(new Blob([content], {type: format[2]}));
-        let options = {
-          filename: prefs.targetdir ? prefs.targetdir + '/' + filename : filename,
-          url: url,
-          saveAs: (prefs.savemethod === 'saveas')
-        };
-
-        const downloads = new Map();
-        downloads.promise = new Promise((resolve, reject) => {
-          downloads.resolve = resolve;
-          downloads.reject = reject;
-        });
-        const OnDownload$ = (delta) => {
-          if (delta.state && downloads.has(delta.id)) {
-            if (delta.state.current === 'complete') {
-              URL.revokeObjectURL(downloads.get(delta.id).url);
-              downloads.delete(delta.id);
-              if (downloads.size === 0) {
-                downloads.resolve();
-              }
-            } else if (delta.state.current === 'interrupted') {
-              URL.revokeObjectURL(downloads.get(delta.id).url);
-              downloads.reject();
-            }
-          }
-        };
-        // Download change listener.
-        // Used to create a notification in the "non prompting" mode, so the user knows
-        // that his screenshot has been created. Also handles cleanup after download.
-        browser.downloads.onChanged.addListener(OnDownload$);
-
-        try {
-          // Trigger download
-          let download_id = await browser.downloads.download(options);
-
-          // Store download options for usage in "onChanged".
-          downloads.set(download_id, options);
-          await downloads.promise;
-
-          // When saving without prompting, then trigger notification
-          const prefs = await Storage.get();
-          if (!options.saveAs && prefs.savenotification) {
-            notify(T$('info_screenshot_saved') + '\n' + filename, {id: nid});
-          }
-        } catch (err) {
-          abort(err);
-        } finally {
-          // Free memory used for our "blob URL"
-          URL.revokeObjectURL(options.url);
-          browser.downloads.onChanged.removeListener(OnDownload$);
-        }
-      }
-    }
   } catch (err) {
     console.error(err);
     alarm(`Failed to generate ${filename}\nReason: ${err}`, {id: nid});
@@ -856,23 +760,81 @@ async function MigrateSettings() {
   }
   await Storage.set(newprefs);
 }
-const buffer = []
-function applyTheme(tabID, base64Url) {
-  buffer.push(base64Url) // Push as last element
-  if (buffer.length === 3) {
-    buffer.shift() // Pop first element
-  }
-  const theme = {
-    images: {
-      additional_backgrounds: [...buffer],
-    },
-    properties: {
-      additional_backgrounds_alignment: Array(buffer.length).fill("center top"),
-      // additional_backgrounds_tiling: Array(buffer.length).fill("no-repeat"), Already the default value
-      color_scheme: 'auto', // TODO: grab the color scheme of the theme?
+
+var bufferCurrent = null
+const bufferTop = []
+const bufferBottom = []
+const bufferSize = 5 // current, last 2, next 2 images
+
+// TODO: ensure bufferSize will be even or allow custom sizes for next and bottom
+const ALLOWED_BUFFER_SIZE_PER_POSITION = (bufferSize - 1) / 2;
+
+var bgAliment = null
+function getBufferSizeMemo(thisBufferSize) {
+  if (thisBufferSize === bufferSize && bgAliment) return bgAliment;
+  
+  bgAliment = Array(bufferSize).fill('center top')
+  return bgAliment;
+}
+
+// TODO: implement scrollDirection, change background position based on scroll
+// TODO: cache between backgrounds tabs
+function applyTheme(windowID, base64Url, scrollDirection) {
+	/*
+	 * To pre-load images using the background property hack,
+	 * the buffering works in 3 steps:
+   *  1) On first load, whe don't need to do anything as the background
+   *     will be inherited from the theme-color
+	 */
+  
+  if (bufferCurrent) {
+    if (bufferTop.length === ALLOWED_BUFFER_SIZE_PER_POSITION) {
+			// Replace first element with the next
+			bufferTop.shift()
     }
+    // Push next background
+    bufferTop.push(bufferCurrent)
   }
-  browser.theme.update(tabID, theme);
+
+	bufferBottom.push(base64Url) // Push as last element
+  if (bufferBottom.length === ALLOWED_BUFFER_SIZE_PER_POSITION) {
+		// Pop first element and assing to current
+		bufferCurrent = bufferBottom.shift()
+  }
+
+  // Current buffer is the background the user will see,
+  // bufferBottom are the cached backgrounds so can be replaced without flikering,
+  // and at last are the top background as cache if user scrolls up.
+  const backgrounds = [bufferCurrent, ...bufferBottom].filter((n) => n)
+  
+  const theme = {
+		// Transparent pixel gif:
+		// data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==
+		colors: {
+			/*
+			 * #0000 is used instead of directly using "transparent" as some fields verify the opacity and reject if transparent.
+			 * See: https://github.com/mozilla/gecko-dev/blob/master/toolkit/modules/LightweightThemeConsumer.sys.mjs
+			 */
+			frame: '#0000', // TODO: use user theme
+			// * accentcolor was replaced by frame in later versions (Firefox >= 70).
+      // * If defined, will spam the console with deprecation messages
+			//accentcolor: '#0000',
+			toolbar: '#0000', // bottom toolbar container + bookmarks
+			toolbar_field: 'rgba(0,0,0,.2)', // URL bar
+			toolbar_top_separator: 'transparent',
+			toolbar_bottom_separator: 'transparent',
+		},
+		images: {
+			additional_backgrounds: backgrounds,
+		},
+		properties: {
+			// All background properties expect an array for every item in `additional_backgrounds`
+			additional_backgrounds_alignment: getBufferSizeMemo(bufferSize),
+			// additional_backgrounds_tiling: Array(bufferSize).fill("no-repeat"), Already the default value
+			color_scheme: 'auto', // TODO: grab the color scheme of the theme?
+		},
+	}
+	browser.theme.update(windowID, theme)
 }
 
 async function Startup() {
