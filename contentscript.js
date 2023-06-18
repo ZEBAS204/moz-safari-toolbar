@@ -331,7 +331,8 @@ function addStylesToElement(elemID) {
   style.textContent = `
   #${elemID} {
     position: fixed !important;
-    inset: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
     width: 100vw !important;
     height: 85px !important;
     z-index: 999999999 !important;
@@ -350,19 +351,25 @@ function addStylesToElement(elemID) {
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toDataURL
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob
 async function DrawWindow(req) {
-  console.log('drawWindow AAAAAAAAAAAAAAAAAAAA')
-  let canvas = document.createElement('canvas');
-  let ctx = canvas.getContext('2d', {alpha: false});
-  let {format, quality, rect: {x, y, width, height}} = req;
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', {alpha: false});
+  let {format, quality, rect: {x, y, width, height}, blurRadius} = req;
+  
   quality = (format === 'image/jpeg' ? quality / 100 : 1);
+
+  // !-------------------------------------
+  // TODO: ADD blur radius user setting
+  blurRadius = 10;
+  // !-------------------------------------
+
   canvas.width = Math.trunc(width);
   canvas.height = Math.trunc(height);
   ctx.imageSmoothingEnabled = false; // The final will be blurried, save time
-  ctx.filter = 'blur(10px)';
-  ctx.drawWindow(window, x, y, width, height, 'rgba(255,0,255,1)');
+  ctx.filter = `blur(${blurRadius}px)`;
+  ctx.drawWindow(window, x - blurRadius, y - blurRadius, width - blurRadius, height - blurRadius, 'rgba(255,0,255,1)');
   return canvas.toDataURL(format, quality);
-  //// Security Error: Content at moz-extension://<uuid>/background.html may not
-  //// load data from blob:https://example.com/<uuid>
+  //! Security Error: Content at moz-extension://<uuid>/background.html may not
+  //! load data from blob:https://example.com/<uuid>
   //return new Promise((resolve, reject) => {
   //  try {
   //    canvas.toBlob(blob => {
