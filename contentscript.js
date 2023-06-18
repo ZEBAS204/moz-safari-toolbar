@@ -380,14 +380,10 @@ async function DrawWindow(req) {
 
 function setupDynamicEventUpdates() {
     console.log('setupDynamicEventUpdates()')
-		document.addEventListener("animationend", screenshotPage);
-		document.addEventListener("animationcancel", screenshotPage);
 		document.addEventListener("pageshow", screenshotPage);
 		document.addEventListener("click", screenshotPage);
 		document.addEventListener("resize", screenshotPage);
 		document.addEventListener("scroll", screenshotPage);
-		document.addEventListener("transitionend", screenshotPage);
-		document.addEventListener("transitioncancel", screenshotPage);
 		document.addEventListener("visibilitychange", screenshotPage);
 }
 
