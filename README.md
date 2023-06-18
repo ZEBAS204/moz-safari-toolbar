@@ -1,6 +1,6 @@
 This browser extension was forked from [jakwings's firefox-screenshot fork](https://github.com/jakwings/firefox-screenshot) of [M-Reimer/savescreenshot](https://github.com/M-Reimer/savescreenshot/tree/14315d4bdcec34efb85b9534701094e63af2b3c3) that was modified to make it work on Firefox version *57* and onward.
 
-https://github.com/ZEBAS204/moz-safari-toolbar/assets/36385457/ce190978-9752-48af-a3ac-abaa01bbee4d
+https://github.com/ZEBAS204/moz-safari-toolbar/assets/36385457/acebf77a-d16b-4492-a3ec-5729924f2f30
 
 > **NOTE:**
 > This is just a proof of concept.
