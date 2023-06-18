@@ -24,6 +24,23 @@
 // https://dom.spec.whatwg.org/#dom-document-compatmode
 // TODO: take a screenshot of an iframe or any scrolling element
 // FIXME: zoom level
+/**
+ * Retrieves information about the web page and its environment.
+ *
+ * @returns {object} An object with the following properties:
+ *   - `ww`: the width of the viewable area of the window
+ *   - `wh`: the height of the viewable area of the window
+ *   - `cw`: the width of the viewable area of the root element (html)
+ *   - `ch`: the height of the viewable area of the root element (html)
+ *   - `sx`: the horizontal scroll position of the window
+ *   - `sy`: the vertical scroll position of the window
+ *   - `sw`: the width of the scrollable area of the web page, excluding the width of the scrollbar
+ *   - `sh`: the height of the scrollable area of the web page, excluding the height of the scrollbar
+ *   - `bw`: the width of the scrollbar
+ *   - `bh`: the height of the scrollbar
+ *   - `dx`: a value of 1 if the web page is horizontally scrollable and -1 otherwise
+ *   - `dy`: a value of 1 if the web page is vertically scrollable and -1 otherwise
+ */
 function GetPageInfo() {
   const root = document.documentElement;
   const page = document.scrollingElement || root;
