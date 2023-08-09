@@ -171,7 +171,6 @@ async function TakeScreenshot(req, tab) {
   }[req.format];
   const prefs = await Storage.get();
   const quality = prefs.jpegquality;
-  const filename = GetDefaultFileName('saved_page', tab, prefs.filenameformat) + '.' + format[0];
 
   let restoreScrollPosition = () => Promise.resolve();
   try {
@@ -186,7 +185,7 @@ async function TakeScreenshot(req, tab) {
     // https://hg.mozilla.org/mozilla-central/file/93c7ed3f5606865707e5ebee8709b13ce0c2e220/gfx/2d/Factory.cpp#l326
     // WTF: animation sucks your eyeballs out during multiple screen captures
     const {vw, vh, pw, ph, bw, bh, width: rw, height: rh} = req;
-    const {scroll: {sx, sy, spx, spy}, direction: dir} = req;
+    const { direction: dir} = req;
 
     // tested using about:config (privacy.resistFingerprinting=[true|false])
     const scale = await GetRealPixelRatio$({
@@ -202,273 +201,19 @@ async function TakeScreenshot(req, tab) {
 
     const [totalWidth, totalHeight] = [rw, rh].map(x => Math.trunc(x * scale));
     let content = null;
-    if (one_canvas) {
-      let canvas = document.createElement('canvas');
-      content = canvas.getContext('2d', {alpha: false});
-      canvas.width = totalWidth + bw;
-      canvas.height = totalHeight + bh;
-      content.imageSmoothingEnabled = false; //! Final image will be blurred
-      content.filter = 'blur(10px)'; // gaussian blur, later need to be reescaled to fix alpha blur offset
-    } else {
-      try {
-        let size = totalWidth * totalHeight * 4;
-        if (size < Number.MAX_SAFE_INTEGER) {
-          switch (format[1]) {
-            case 'png':  // seriously?
-              if (totalWidth > 2147483647 || totalHeight > 2147483647) throw null;
-              break;
-            case 'jpeg':
-              if (totalWidth > 65535 || totalHeight > 65535) throw null;
-              break;
-          }
-          // RangeError: invalid array length ?
-          content = new Uint8Array(size);
-        } else {
-          throw null;
-        }
-      } catch (err) {
-        alarm(T$('errorImageTooLarge', filename), {id: nid});
-        return;
-      }
-      notify(T$('warningImageVeryLarge'), {id: nid});
-    }
-
-    const use_native = (BROWSER_VERSION_MAJOR >= 82
-                        || (scale === 1 && CanvasRenderingContext2D.prototype.drawWindow));
-    const use_css_croll = !use_native;
-    const use_js_scroll = !use_native && !use_css_croll;
-    const wtf_scrollbar = !use_native && !(bw || bh);
+    let canvas = document.createElement('canvas');
+    content = canvas.getContext('2d', {alpha: false});
+    canvas.width = totalWidth + bw;
+    canvas.height = totalHeight + bh;
+    content.imageSmoothingEnabled = false; //! Final image will be blurred
+    content.filter = 'blur(10px)'; // gaussian blur, later need to be reescaled to fix alpha blur offset
+  
+    const use_native = (BROWSER_VERSION_MAJOR >= 82 || (scale === 1 && CanvasRenderingContext2D.prototype.drawWindow));
 
     console.info({
       BROWSER_VERSION_MAJOR, req, scale, one_canvas,
-      use_native, use_css_croll, use_js_scroll, wtf_scrollbar,
+      use_native
     });
-
-    // XXX: scrolling can cause side effects
-    let use_scroll = use_css_croll || use_js_scroll;
-    let updateScrollPosition = null;
-
-    // WTF: smooth scrolling is time consuming (solved by behavior:auto)
-    const js_scroll_restore = `window.scrollTo({left: ${sx + spx}, top: ${sy + spy}, behavior: 'auto'})`;
-    const css_reset_1 = {
-      allFrames: false,
-      runAt: 'document_start',
-      cssOrigin: 'user',
-      code: [
-        ':root { scroll-behavior: auto !important; }',
-        `:root { min-width: ${vw}px !important; }`,
-        `:root { min-height: ${vh}px !important; }`,
-        // Firefox 64+ : scrollbar-color scrollbar-width
-        (!wtf_scrollbar ? '' : ':root { scrollbar-color: transparent transparent !important; }'),
-        // XXX: scrollbar still reappears in scrollable child element
-        //      for around one second after each scroll
-        (!wtf_scrollbar ? '' : ':root { scrollbar-width: none !important; }'),
-      ].join('\n'),
-    };
-    const css_reset_2 = {
-      allFrames: true,
-      runAt: 'document_start',
-      cssOrigin: 'user',
-      code: [
-        '*, *>*, *>*>*',
-        ', *::before, *>*::before, *>*>*::before',
-        ', *::after, *>*::after, *>*>*::after',
-        '{ animation-play-state: paused !important; }',
-      ].join('\n'),
-    };
-
-    let undoJSScroll = () => {
-      return browser.tabs.executeScript(tab.id, {
-        allFrames: false,
-        runAt: 'document_start',
-        code: js_scroll_restore,
-      });
-    };
-    let doCSSReset = () => {
-      return browser.tabs.insertCSS(tab.id, css_reset_1).then(() => {
-        return browser.tabs.insertCSS(tab.id, css_reset_2);
-      });
-    };
-    let undoCSSReset = () => {
-      return browser.tabs.removeCSS(tab.id, css_reset_2).then(() => {
-        return browser.tabs.removeCSS(tab.id, css_reset_1);
-      });
-    };
-
-    let resetScrollPosition = () => {
-      // TODO: pause js and svg animation, pause animated graphics and videos
-      return doCSSReset().then(() => {
-        // reset position of sticky elements
-        return browser.tabs.executeScript(tab.id, {
-          allFrames: false,
-          runAt: 'document_start',
-          code: 'window.scrollTo({top: 0, left: 0, behavior: "auto"})',
-        });
-      });
-    };
-
-    if (use_css_croll) {
-      let tasks = [undoCSSReset];
-      restoreScrollPosition = () => {
-        restoreScrollPosition = () => Promise.resolve();
-        return Promise.all(tasks.map(exec => exec())).then(undoJSScroll);
-      };
-      // https://developer.mozilla.org/en-US/docs/Web/CSS/Cascade
-      let applyCssScroll = null;
-      // NOTE: stuttering of background when scrollbar disappear?
-      //       solution is :root { min-[width|height]: actual page size }
-      let style = (await browser.tabs.executeScript(tab.id, {
-        allFrames: false,
-        runAt: 'document_start',
-        code: `{
-          let style = window.getComputedStyle(document.documentElement);
-          ({
-            translate: style.translate,
-            transform: style.transform,
-            bgx: style.backgroundPositionX,
-            bgy: style.backgroundPositionY,
-          })
-        }`,
-      }))[0];
-      style.bgx = style.bgx.split(/\s*,\s*/);
-      style.bgy = style.bgy.split(/\s*,\s*/);
-      if (style.translate != null) {
-        let xyz = (style.translate.replace(/^none$/, '') + ' 0px 0px 0px').trim().split(/\s+/);
-        applyCssScroll = (x, y) => {
-          let bgx = style.bgx.map(v => `calc(${v} - ${x}px)`).join(', ');
-          let bgy = style.bgy.map(v => `calc(${v} - ${y}px)`).join(', ');
-          let css = {
-            runAt: 'document_start',
-            cssOrigin: 'user',
-            code: `
-              :root {
-                translate: calc(${xyz[0]} - ${x}px) calc(${xyz[1]} - ${y}px)
-                           ${xyz[2]} !important;
-                transition: none !important;
-                background-position-x: ${bgx} !important;
-                background-position-y: ${bgy} !important;
-              }
-            `,
-          };
-          return browser.tabs.insertCSS(tab.id, css).then(() => {
-            tasks.push(() => browser.tabs.removeCSS(tab.id, css));
-          });
-        };
-      } else {
-        let toCSS = (x, y) => {
-          if (/\bmatrix(?:3d)?\b/.test(style.transform)) {
-            return style.transform.replace(
-              /\b(matrix(?:3d)?)\s*\(([^)]*)\)/,
-              (_, func, args) => {
-                let xyz = args.split(/\s*,\s*/);
-                switch (func) {
-                  case 'matrix':
-                    xyz[4] = `calc(${xyz[4]} - ${x}px)`;
-                    xyz[5] = `calc(${xyz[5]} - ${y}px)`;
-                    break;
-                  case 'matrix3d':
-                    xyz[12] = `calc(${xyz[12]} - ${x}px)`;
-                    xyz[13] = `calc(${xyz[13]} - ${y}px)`;
-                    break;
-                  default: throw new Error('toCSS');
-                }
-                return `${func}(${xyz.join(', ')})`;
-              }
-            );
-          } else {
-            return style.transform.replace(/^none$/, '') + ` translate(-${x}px, -${y}px)`;
-          }
-        };
-        applyCssScroll = (x, y) => {
-          let bgx = style.bgx.map(v => `calc(${v} - ${x}px)`).join(', ');
-          let bgy = style.bgy.map(v => `calc(${v} - ${y}px)`).join(', ');
-          let css = {
-            runAt: 'document_start',
-            cssOrigin: 'user',
-            code: `
-              :root {
-                transform: ${toCSS(x, y)} !important;
-                transition: none !important;
-                background-position-x: ${bgx} !important;
-                background-position-y: ${bgy} !important;
-              }
-            `,
-          };
-          return browser.tabs.insertCSS(tab.id, css).then(() => {
-            tasks.push(() => browser.tabs.removeCSS(tab.id, css));
-          });
-        };
-      }
-      let is_first = true;  // (sx, sy) is static, useless after scrolling
-      updateScrollPosition = async ({x, y, w, h}) => {
-        // _s[xy] is not clamped when exceeding scrollMax[XY]
-        let _sx = dir.x > 0 ? x : -(pw - x) + w;
-        let _sy = dir.y > 0 ? y : -(ph - y) + h;
-        if (is_first) {
-          is_first = false;
-          let no_scroll_x = dir.x > 0 ? (_sx >= sx && _sx + w <= sx + vw)
-                                      : (_sx <= sx && _sx - w >= sx - vw);
-          let no_scroll_y = dir.y > 0 ? (_sy >= sy && _sy + h <= sy + vh)
-                                      : (_sy <= sy && _sy - h >= sy - vh);
-          if (no_scroll_x && no_scroll_y) {
-            return {
-              x: dir.x > 0 ? _sx - sx : vw - (sx - _sx + w),
-              y: dir.y > 0 ? _sy - sy : vh - (sy - _sy + h),
-            };
-          }
-        }
-        await applyCssScroll(_sx, _sy);
-        return {
-          x: dir.x > 0 ? 0 : vw - w,
-          y: dir.y > 0 ? 0 : vh - h,
-        };
-      };
-    } else if (use_js_scroll) {
-      restoreScrollPosition = () => {
-        restoreScrollPosition = () => Promise.resolve();
-        return undoCSSReset().then(undoJSScroll);
-      };
-      let is_first = true;  // (sx, sy) is static, useless after scrolling
-      updateScrollPosition = async ({x, y, w, h}) => {
-        // _s[xy] is not clamped when exceeding scrollMax[XY]
-        let _sx = dir.x > 0 ? x : -(pw - x) + w;
-        let _sy = dir.y > 0 ? y : -(ph - y) + h;
-        if (is_first) {
-          is_first = false;
-          let no_scroll_x = dir.x > 0 ? (_sx >= sx && _sx + w <= sx + vw)
-                                      : (_sx <= sx && _sx - w >= sx - vw);
-          let no_scroll_y = dir.y > 0 ? (_sy >= sy && _sy + h <= sy + vh)
-                                      : (_sy <= sy && _sy - h >= sy - vh);
-          if (no_scroll_x && no_scroll_y) {
-            return {
-              x: dir.x > 0 ? _sx - sx : vw - (sx - _sx + w),
-              y: dir.y > 0 ? _sy - sy : vh - (sy - _sy + h),
-            };
-          }
-        }
-        await browser.tabs.executeScript(tab.id, {
-          allFrames: false,
-          runAt: 'document_start',
-          code: `window.scrollTo({left: ${_sx}, top: ${_sy}, behavior: 'auto'})`,
-        });
-        return {
-          // full page ?
-          x: x <= pw - vw ? 0 : vw - w,
-          y: y <= ph - vh ? 0 : vh - h,
-        };
-      };
-    }
-
-    if (req.region === 'full') {
-      if (!use_scroll && use_native) {
-        use_scroll = true;
-        restoreScrollPosition = () => {
-          restoreScrollPosition = () => Promise.resolve();
-          return undoCSSReset().then(undoJSScroll);
-        };
-      }
-      await resetScrollPosition();
-    }
 
     const [mw, mh] = (() => {
       // WTF: browser.tab.captureTab and DrawWindow:
@@ -543,36 +288,14 @@ async function TakeScreenshot(req, tab) {
               // Doesn't matter if the image contains alpha or not, because we are applying gaussian blur,
               // the drawn image edges will contract because of the applied blur.
               // To prevent this, we scale the image a bit so that artifacts are not visible
-
-              if (one_canvas) {
-                content.drawImage(img,
-                  // bw, bh are used to fix the removed scrollbar missing space
-                  pos.x * scl_w - bw - blurRadius,
-                  pos.y * scl_h - bh - blurRadius,
-                  w * scl_w + bw + blurRadius * 2,
-                  h * scl_h + bh + blurRadius * 2,
-                );
+              content.drawImage(img,
+                // bw, bh are used to fix the removed scrollbar missing space
+                pos.x * scl_w - bw - blurRadius,
+                pos.y * scl_h - bh - blurRadius,
+                w * scl_w + bw + blurRadius * 2,
+                h * scl_h + bh + blurRadius * 2,
+              );
                 DebugDraw(content, {x, y, w, h, scale, n});
-              } else {
-                console.warn('Using large canvas!')
-                let canvas = document.createElement('canvas');
-                let ctx = canvas.getContext('2d', {alpha: false});
-                canvas.width = Math.trunc(w * scale);
-                canvas.height = Math.trunc(h * scale);
-                ctx.imageSmoothingEnabled = false;
-                ctx.drawImage(img, pos.x * scl_w, pos.y * scl_h, w * scl_w, h * scl_h,
-                                               0,             0, w * scale, h * scale);
-                DebugDraw(ctx, {x:0, y:0, w, h, scale, n});
-                if (x === 0 && w === rw) {
-                  content.set(ctx.getImageData(0, 0, w * scale, h * scale).data,
-                              y * rw * scale * 4);
-                } else {
-                  for (let i = 0; i < h * scale; i++) {
-                    content.set(ctx.getImageData(0, i, w * scale, 1).data,
-                                ((y + i) * rw * scale + x) * 4);
-                  }
-                }
-              }
             });
           });
         });
@@ -589,56 +312,13 @@ async function TakeScreenshot(req, tab) {
     mutex.unlock(key);
 
     await decoding.parallel();
-    if (one_canvas) {
       //console.log("BASE64 IMG:\n", content.canvas.toDataURL("image/jpeg"));
       const buff = await (await fetch(content.canvas.toDataURL("image/jpg", quality)));
       applyTheme(tab.windowId, buff.url)
       content = buff.arrayBuffer();
-    } else {
-      const lock_time = 1000 * 60 * 15;
-      // worker is often cpu hog, just one is enough
-      if (!(await mutex.lock('worker', {retry: false, lock_time}))) {
-        notify(T$('warningWorkerBusy'), {id: nid});
-        await mutex.lock('worker', {lock_time});
-        if (badge) {
-          await browserAction.setTitle({title: T$('badge_saving'), tabId: tab.id});
-          await browserAction.setBadgeText({text: '...', tabId: tab.id});
-          await browserAction.setBadgeBackgroundColor({color: 'green', tabId: tab.id});
-        }
-      }
-      console.time('worker');
-      let worker = new Worker(
-        format[1] === 'jpeg' ? 'lib/worker-jpeg.js' : 'lib/worker-png.js'
-      );
-      // use worker to avoid blocking other extensions
-      content = await new Promise((resolve, reject) => {
-        worker.onerror = (event) => reject(event);
-        worker.onmessage = (event) => resolve(event.data);
-        worker.postMessage({
-          data: content,
-          width: totalWidth,
-          height: totalHeight,
-          quality: quality,
-        });
-        setTimeout(reject, lock_time, 'timeout');
-      }).catch(err => {
-        abort(err);
-      }).finally(() => {
-        worker.terminate();
-        mutex.unlock('worker');
-        console.timeEnd('worker');
-      });
-    }
-
-    await browser.tabs.sendMessage(tab.id, {
-      type: 'TriggerOpen',
-      content: new Blob([await content], {type: format[2]}),
-      filename: 'about:blank',
-    });
-
   } catch (err) {
     console.error(err);
-    alarm(`Failed to generate ${filename}\nReason: ${err}`, {id: nid});
+    alarm(`Failed to generate image\nReason: ${err}`, {id: nid});
     restoreScrollPosition().catch(ignore);
   } finally {
     if (await mutex.lock(key, {retry: false})) {
@@ -677,68 +357,6 @@ function DebugDraw(ctx, info) {
   ctx.fillText(info.n, info.x, info.y, info.w);
   ctx.restore();
 }
-
-
-// Gets the default file name, used for saving the screenshot
-function GetDefaultFileName(aDefaultFileName, tab, aFilenameFormat) {
-  //prioritize formatted variant
-  const formatted = SanitizeFileName(ApplyFilenameFormat(aFilenameFormat, tab));
-  if (formatted)
-    return formatted;
-
-  // If possible, base the file name on document title
-  const title = SanitizeFileName(tab.title);
-  if (title)
-    return title;
-
-  // Otherwise try to use the actual HTML filename
-  const url = new URL(tab.url)
-  const path = url.pathname;
-  if (path) {
-    const filename = SanitizeFileName(path.substring(path.lastIndexOf('/')+1));
-    if (filename)
-      return filename;
-  }
-
-  // Finally use the provided default name
-  return aDefaultFileName;
-}
-
-// Replaces format character sequences with the actual values
-function ApplyFilenameFormat(aFormat, tab) {
-  const now = new Date();
-  return aFormat.replace(/%[\s\S]?/g, (s) => {
-    switch (s) {
-      case '%Y': return now.getFullYear();
-      case '%m': return String(now.getMonth() + 1).padStart(2, '0');
-      case '%d': return String(now.getDate()).padStart(2, '0');
-      case '%H': return String(now.getHours()).padStart(2, '0');
-      case '%M': return String(now.getMinutes()).padStart(2, '0');
-      case '%S': return String(now.getSeconds()).padStart(2, '0');
-      case '%t': return tab.title || '';
-      case '%u': return tab.url.replace(/:/g, '.').replace(/[/?]/g, '-');
-      case '%h': return new URL(tab.url).host.replace(/\.$/, '') || 'NULL';
-      //case '%%': return '%';
-      default: return s;
-    }
-  });
-}
-
-// "Sanitizes" given string to be used as file name.
-function SanitizeFileName(aFileName) {
-  // http://www.mtu.edu/umc/services/digital/writing/characters-avoid/
-  aFileName = aFileName.replace(/[<\{]+/g, "(");
-  aFileName = aFileName.replace(/[>\}]+/g, ")");
-  aFileName = aFileName.replace(/[#$%!&*\'?\"\/:\\@|]/g, "");
-  // Remove leading spaces, "." and "-"
-  aFileName = aFileName.replace(/^[-.\s]+/, "");
-  // Remove trailing spaces and "."
-  aFileName = aFileName.replace(/[\s.]+$/, "");
-  // Replace all groups of spaces with just one space character
-  aFileName = aFileName.replace(/\s+/g, " ");
-  return aFileName;
-}
-
 
 // Migrates old "only one possible" preferences to new "multi select" model
 async function MigrateSettings() {

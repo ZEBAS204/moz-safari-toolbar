@@ -286,44 +286,6 @@ function SaveScreenshot({region, left, top, width, height, format}) {
   });
 }
 
-
-// Triggers a download.
-async function TriggerOpen(content, filename) {
-  return;
-  const url = URL.createObjectURL(content);
-  const elemID = 'FF_screenshot'
-
-  const thisDocument = (document.body || document.documentElement)
-  const query = thisDocument.querySelector(`#${elemID}`)
-  console.log('query():', query)
-  if (query) {
-      console.log('query(): updating url', query)
-      query.src = url;
-      return
-  }
-  
-  const elem = document.createElement('img');
-  // console.log('TRIGGER OPEN', content)
-  try {
-    addStylesToElement(elemID)
-    elem.src = url;
-    elem.id = elemID;
-    
-    // elem.download = filename;
-    // // a.hidden = true;
-    // // a.style.display = 'none';
-    // necessary for Firefox 57
-    thisDocument.appendChild(elem);
-    
-    //a.click();
-  } catch (err) {
-    console.error('Error elemen:', err)
-  }// finally {
-  //   URL.revokeObjectURL(url);
-  //   a.remove();
-  // }
-}
-
 function addStylesToElement(elemID) {
   const style = document.createElement('style');
   (document.body || document.documentElement).appendChild(style);
@@ -416,7 +378,6 @@ setupDynamicEventUpdates()
 // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Content_scripts#communicating_with_background_scripts
 browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.type) {
-    case 'TriggerOpen': return TriggerOpen(request.content, request.filename);
     case 'TakeScreenshot': return TakeScreenshot(request);
     case 'DrawWindow': return DrawWindow(request);
   }
