@@ -25,6 +25,7 @@
       "utils/storage.js",
       "_globals.js",
       "lib/crc32.js",
+      "lib/stackblur.js",
       "imagecomments.js",
       "background.js"
     ]
