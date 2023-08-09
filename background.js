@@ -20,6 +20,7 @@
 'use strict';
 
 let DEBUG_DRAW = false;
+const TODO_BLUR_RADIUS = 15 //* blur radius
 
 const browserAction = browser.browserAction;
 
@@ -206,7 +207,7 @@ async function TakeScreenshot(req, tab) {
     canvas.width = totalWidth + bw;
     canvas.height = totalHeight + bh;
     content.imageSmoothingEnabled = false; //! Final image will be blurred
-    content.filter = 'blur(10px)'; // gaussian blur, later need to be reescaled to fix alpha blur offset
+    // content.filter = 'blur(10px)'; // gaussian blur, later need to be reescaled to fix alpha blur offset
   
     const use_native = (BROWSER_VERSION_MAJOR >= 82 || (scale === 1 && CanvasRenderingContext2D.prototype.drawWindow));
 
@@ -295,6 +296,14 @@ async function TakeScreenshot(req, tab) {
                 w * scl_w + bw + blurRadius * 2,
                 h * scl_h + bh + blurRadius * 2,
               );
+              StackBlur.canvasRGB(
+                content.canvas,
+                0,
+                0,
+                content.canvas.width,
+                content.canvas.height,
+                TODO_BLUR_RADIUS
+              )
                 DebugDraw(content, {x, y, w, h, scale, n});
             });
           });
