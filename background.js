@@ -396,7 +396,21 @@ async function MigrateSettings() {
   await Storage.set(newprefs);
 }
 
-var bufferCurrent = null
+let userTheme = null
+async function getUserTheme(windowID, invalidate = false) {
+  // TODO: rerun function when user changes theme
+	if (userTheme && !invalidate) return userTheme
+	const theme = await browser.theme.getCurrent(windowID)
+	if (theme?.colors?.toolbar) {
+		const [r, g, b] = anyToRgba(theme.colors.toolbar)
+		theme.colors.toolbar = `rgba(${r},${g},${b},0.25)`
+	}
+	userTheme = theme
+	return theme // don't return theme directly as we want JS engine to optimize userTheme
+}
+getUserTheme()
+
+let bufferCurrent = null
 const bufferTop = []
 const bufferBottom = []
 const bufferSize = 5 // current, last 2, next 2 images
