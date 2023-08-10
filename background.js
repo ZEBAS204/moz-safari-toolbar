@@ -354,6 +354,7 @@ async function TakeScreenshot(req, tab) {
     mutex.unlock('worker');
   }
 }
+
 function DebugDraw(ctx, info) {
   if (!DEBUG_DRAW) return;
   ctx.save();
@@ -460,16 +461,19 @@ function applyTheme(windowID, base64Url, scrollDirection) {
 		// Transparent pixel gif:
 		// data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==
 		colors: {
+			// Shallow cpy user theme
+			...userTheme?.colors,
+
 			/*
 			 * #0000 is used instead of directly using "transparent" as some fields verify the opacity and reject if transparent.
 			 * See: https://github.com/mozilla/gecko-dev/blob/master/toolkit/modules/LightweightThemeConsumer.sys.mjs
 			 */
 			frame: '#0000', // TODO: use user theme
 			// * accentcolor was replaced by frame in later versions (Firefox >= 70).
-      // * If defined, will spam the console with deprecation messages
-			//accentcolor: '#0000',
-			toolbar: '#0000', // bottom toolbar container + bookmarks
-			toolbar_field: 'rgba(0,0,0,.2)', // URL bar
+			// * If defined, will spam the console with deprecation messages
+			accentcolor: '#0000',
+			// toolbar: '#0000', // bottom toolbar container + bookmarks
+			toolbar_field: 'rgba(0,0,0,.25)', // URL bar
 			toolbar_top_separator: 'transparent',
 			toolbar_bottom_separator: 'transparent',
 		},
@@ -480,7 +484,7 @@ function applyTheme(windowID, base64Url, scrollDirection) {
 			// All background properties expect an array for every item in `additional_backgrounds`
 			additional_backgrounds_alignment: getBufferSizeMemo(bufferSize),
 			// additional_backgrounds_tiling: Array(bufferSize).fill("no-repeat"), Already the default value
-			color_scheme: 'auto', // TODO: grab the color scheme of the theme?
+			color_scheme: userTheme.properties?.color_scheme,
 		},
 	}
 	browser.theme.update(windowID, theme)
