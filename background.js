@@ -153,7 +153,7 @@ browser.runtime.onMessage.addListener((data, sender) => {
   if (data.type === 'TakeScreenshot') return TakeScreenshot(data, sender.tab);
 });
 
-
+let CANVAS_ELEMENT = null
 async function TakeScreenshot(req, tab) {
   // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Browser_support_for_JavaScript_APIs
   const BROWSER_VERSION_MAJOR = parseInt((await browser.runtime.getBrowserInfo()).version, 10);
@@ -202,7 +202,15 @@ async function TakeScreenshot(req, tab) {
 
     const [totalWidth, totalHeight] = [rw, rh].map(x => Math.trunc(x * scale));
     let content = null;
-    let canvas = document.createElement('canvas');
+    let canvas = null
+    if (CANVAS_ELEMENT && CANVAS_ELEMENT instanceof HTMLCanvasElement) {
+			canvas = CANVAS_ELEMENT
+		} else {
+			console.log('Creating new drawing canvas')
+			canvas = document.createElement('canvas')
+			canvas.id = 'firefox-canvas-screenshot' // TODO: add random id
+			CANVAS_ELEMENT = canvas
+		}
     content = canvas.getContext('2d', {alpha: false});
     canvas.width = totalWidth + bw;
     canvas.height = totalHeight + bh;
