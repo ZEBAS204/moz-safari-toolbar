@@ -293,7 +293,7 @@ async function TakeScreenshot(req, tab) {
               let scl_w = use_native ? scale : img.naturalWidth / (vw + bw);
               let scl_h = use_native ? scale : img.naturalHeight / (vh + bh);
 
-              const blurRadius = 10 * 2
+              const blurRadius = TODO_BLUR_RADIUS * 2
               // Doesn't matter if the image contains alpha or not, because we are applying gaussian blur,
               // the drawn image edges will contract because of the applied blur.
               // To prevent this, we scale the image a bit so that artifacts are not visible
