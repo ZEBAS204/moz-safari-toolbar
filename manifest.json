@@ -27,7 +27,8 @@
       "lib/crc32.js",
       "lib/stackblur.js",
       "imagecomments.js",
-      "background.js"
+      "background.js",
+      "utils/colors.js"
     ]
   },
 
