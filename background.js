@@ -211,7 +211,7 @@ async function TakeScreenshot(req, tab) {
 			canvas.id = 'firefox-canvas-screenshot' // TODO: add random id
 			CANVAS_ELEMENT = canvas
 		}
-    content = canvas.getContext('2d', {alpha: false});
+    content = canvas.getContext('2d', { alpha: false, willReadFrequently: true })
     canvas.width = totalWidth + bw;
     canvas.height = totalHeight + bh;
     content.imageSmoothingEnabled = false; //! Final image will be blurred
