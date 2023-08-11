@@ -67,7 +67,7 @@ This extension uses the [Theme API](https://developer.mozilla.org/en-US/docs/Moz
   > - On page load, use the behavior of *step 1* while decompressing the cache.
   > - On page close, clear the cache.
   >
-  > **Note:** compressed cache will probably use [BlurHash Algorithm](https://github.com/woltapp/blurhash/blob/master/Algorithm.md) and the most expensive calculations should be migrated to WebAssembly and accessed through a shared worker.
+  > **Note:** compressed cache will probably use [BlurHash Algorithm](https://github.com/woltapp/blurhash/blob/master/Algorithm.md) or [One-byte Granularity](https://stackoverflow.com/a/38126771) and the most expensive calculations should be migrated to WebAssembly and accessed through a shared worker.
 
 ---
 
