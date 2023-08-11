@@ -49,7 +49,6 @@ This extension uses the [Theme API](https://developer.mozilla.org/en-US/docs/Moz
 - CPU intensive extension:
   > This extension is currently processing images on CPU-accelerated canvas (`2d context`). Aside from that, is also encoding and decoding a `base64` screenshot, resizing and blurring it, and worse, encoding it again to `base64` only to be decoded again by the browser.
 
-
 - Background is not aligned properly:
   > To remove the *artifacts* of the blurred background at the edges ([example here](https://i.imgur.com/fqwnQro.gif)), the image needs to be upscaled to hide these hard edges.
   > Also, when taking a screenshot of the page, the width of the page scrollbars is subtracted from the final image.
@@ -67,6 +66,8 @@ This extension uses the [Theme API](https://developer.mozilla.org/en-US/docs/Moz
   > - On page unload, compress down all buffers using a worker.
   > - On page load, use the behavior of *step 1* while decompressing the cache.
   > - On page close, clear the cache.
+  >
+  > **Note:** compressed cache will probably use [BlurHash Algorithm](https://github.com/woltapp/blurhash/blob/master/Algorithm.md) and the most expensive calculations should be migrated to WebAssembly and accessed through a shared worker.
 
 ---
 
