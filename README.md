@@ -9,13 +9,13 @@ https://github.com/ZEBAS204/moz-safari-toolbar/assets/36385457/acebf77a-d16b-449
 
 This extension works by capturing a tiny portion of the top page and converting it to an image, blur it and set as a theme background.
 
-Capturing the page can be done *only* (or as far as I know) in *two ways*:
+- [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) does not work in Firefox (August 2023). This extension uses canvas powered by CPU.
 
-1. [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) does not work in Firefox (August 2023). This extension uses canvas powered by CPU.
+- Capturing the page can be done *only* (or as far as I know) in *two ways*:
 
-2. (extension only - currently in use) Using the [`browser.tabs.captureTab`](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs/captureTab)/[`browser.tabs.captureVisibleTab`](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs/captureVisibleTab) (or `DrawWindow` message in older versions) to take a screenshot of the current tab and process it on a `<canvas>` element.
+  1. (extension only - currently in use) Using the [`browser.tabs.captureTab`](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs/captureTab)/[`browser.tabs.captureVisibleTab`](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs/captureVisibleTab) (or `DrawWindow` message in older versions) to take a screenshot of the current tab and process it on a `<canvas>` element.
 
-3. Using the [`WebCodecs API`](https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API) to draw a video stream of the current tab on a `<video>` element and later extract it into a `<canvas>` element to process it.
+  2. Using the [`WebCodecs API`](https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API) to draw a video stream of the current tab on a `<video>` element and later extract it into a `<canvas>` element to process it.
 One drawback to the Canvas approach is that there is no guarantee that all video frames get processed.
 
 ### Limitations
