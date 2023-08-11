@@ -60,13 +60,13 @@ This extension uses the [Theme API](https://developer.mozilla.org/en-US/docs/Moz
   > - On **first load** of the page, the extension will have two options based on the user preferences on how to stylize the top of the page:
   >   1. Capture a tiny height of the top of the page and repeat in all the background.
   >   2. Set a solid color, based on the `theme-color` metadata of the page (similar to [Adaptive Tab Bar Colour](https://github.com/easonwong-de/Adaptive-Tab-Bar-Colour))
-  > 2. **Static mode:** Create a static buffer of the page (up to `25%` as is the maximum distance the user can travel on a quick scroll) and keep repeating this behavior. Cut the full static buffer into small chunks so we can match them when the user scrolls.
-  > 3. **Dynamic mode:** Listen to page mutations to verify if the page contains dynamic content. Re-create the buffer on demand.
-  > 4. Cache the buffers (up to `25%`) for quick access in case the user scroll ups.
-  > 5. The rest of the cache will be compressed down and decoded when needed.
-  > 6. On page unload, compress down all buffers using a worker.
-  > 7. On page load, use the behavior of *step 1* while decompressing the cache.
-  > 8. On page close, clear the cache.
+  > - **Static mode:** Create a static buffer of the page (up to `25%` as is the maximum distance the user can travel on a quick scroll) and keep repeating this behavior. Cut the full static buffer into small chunks so we can match them when the user scrolls.
+  > - **Dynamic mode:** Listen to page mutations to verify if the page contains dynamic content. Re-create the buffer on demand.
+  > - Cache the buffers (up to `25%`) for quick access in case the user scroll ups.
+  > - The rest of the cache will be compressed down and decoded when needed.
+  > - On page unload, compress down all buffers using a worker.
+  > - On page load, use the behavior of *step 1* while decompressing the cache.
+  > - On page close, clear the cache.
 
 ---
 
