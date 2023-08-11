@@ -400,14 +400,20 @@ async function MigrateSettings() {
 let userTheme = null
 async function getUserTheme(windowID, invalidate = false) {
   // TODO: rerun function when user changes theme
+  // TODO: add setting to tweak what colors will be used
 	if (userTheme && !invalidate) return userTheme
 	const theme = await browser.theme.getCurrent(windowID)
-	if (theme?.colors?.toolbar) {
+  if (theme.colors?.popup) {
+		// We use the popup background color as this one often match the background of the toolbar
+		const [r, g, b] = anyToRgba(theme.colors.popup)
+		theme.colors.toolbar = `rgba(${r},${g},${b},0.25)`
+  } else if (theme.colors?.toolbar) {
+		// Default to toolbar
 		const [r, g, b] = anyToRgba(theme.colors.toolbar)
 		theme.colors.toolbar = `rgba(${r},${g},${b},0.25)`
 	}
 	userTheme = theme
-	return theme // don't return theme directly as we want JS engine to optimize userTheme
+	return userTheme // don't return theme directly as we want JS engine to optimize userTheme
 }
 getUserTheme()
 
