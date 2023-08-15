@@ -1,3 +1,5 @@
+https://github.com/ZEBAS204/moz-safari-toolbar/assets/36385457/acebf77a-d16b-4492-a3ec-5729924f2f30
+
 > **Warning**
 > This is just a proof of concept.
 >
@@ -9,8 +11,6 @@
 > - Enter `about:debugging` in the URL bar
 > - Click "This Firefox" and then click on "Load Temporary Add-on"
 > - Open the extension's directory and select any file inside the extension, or select the packaged extension (`.zip` file)
-
-https://github.com/ZEBAS204/moz-safari-toolbar/assets/36385457/acebf77a-d16b-4492-a3ec-5729924f2f30
 
 ## Problems
 
