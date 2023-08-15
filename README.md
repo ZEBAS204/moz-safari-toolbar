@@ -1,9 +1,16 @@
-This browser extension was forked from [jakwings's firefox-screenshot fork](https://github.com/jakwings/firefox-screenshot) of [M-Reimer/savescreenshot](https://github.com/M-Reimer/savescreenshot/tree/14315d4bdcec34efb85b9534701094e63af2b3c3) that was modified to make it work on Firefox version *57* and onward.
-
-https://github.com/ZEBAS204/moz-safari-toolbar/assets/36385457/acebf77a-d16b-4492-a3ec-5729924f2f30
-
 > **Warning**
 > This is just a proof of concept.
+>
+> **I recommend using [Adaptive Tab Bar Colour](https://addons.mozilla.org/en-US/firefox/addon/adaptive-tab-bar-colour/) ([source](https://github.com/easonwong-de/Adaptive-Tab-Bar-Colour)) as this extension in its current state is not suited for normal users.**
+>
+> If you are still interested in using this extension, please read the following installation guide:
+>
+> - Clone this repository or [download the source ZIP](https://github.com/ZEBAS204/moz-safari-toolbar/archive/refs/heads/master.zip)
+> - Enter `about:debugging` in the URL bar
+> - Click "This Firefox" and then click on "Load Temporary Add-on"
+> - Open the extension's directory and select any file inside the extension, or select the packaged extension (`.zip` file)
+
+https://github.com/ZEBAS204/moz-safari-toolbar/assets/36385457/acebf77a-d16b-4492-a3ec-5729924f2f30
 
 ## Problems
 
@@ -42,9 +49,9 @@ This extension uses the [Theme API](https://developer.mozilla.org/en-US/docs/Moz
 
 - User theme's original background image will be replaced.
 
-- Blob backgrounds (`blob://...`) do not work. Firefox only allows local images or `base64` encoded images as `background-image`.
-
 - Scrolling too slowly will cause sticky/fixed elements to display.
+
+- Only the main scrollbar will be registered to scroll events (eg. will not work properly in [The “Basics”](https://cpu.land/the-basics))
 
 - CPU intensive extension:
   > This extension is currently processing images on CPU-accelerated canvas (`2d context`). Aside from that, is also encoding and decoding a `base64` screenshot, resizing and blurring it, and worse, encoding it again to `base64` only to be decoded again by the browser.
@@ -78,3 +85,7 @@ This extension uses the [Theme API](https://developer.mozilla.org/en-US/docs/Moz
 - Maximum width/height of a JPEG screenshot: 65535 pixels per specification
 
 A screen of higher resolution (physical/virtual points per pixel of which is 1.5, 2, 2.5, 3, etc.) costs more computer memory (points converted to pixels) i.e. costs more pixels to save a screenshot unless you want to sacrifice the image quality by resizing and resampling.  For example, with 2x resolution, a 50x50 region will be saved as a screenshot of size 100x100, resulting in an image not only 4 times larger in display size but also likely in file size.
+
+----
+
+> This browser extension was forked from [jakwings's firefox-screenshot fork](https://github.com/jakwings/firefox-screenshot) of [M-Reimer/savescreenshot](https://github.com/M-Reimer/savescreenshot/tree/14315d4bdcec34efb85b9534701094e63af2b3c3) that was modified to make it work on Firefox version *57* and onward.
