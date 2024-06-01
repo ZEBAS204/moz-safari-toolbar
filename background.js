@@ -17,193 +17,211 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-'use strict';
+;('use strict')
 
-let DEBUG_DRAW = false;
-const TODO_BLUR_RADIUS = 15 //* blur radius
+// TODO: rename blur radius and make it configurable
+let DEBUG_DRAW = false
+const TODO_BLUR_RADIUS = 10
 
-const browserAction = browser.browserAction;
+const browserAction = browser.browserAction
 
 function DecodeImage$(url) {
-  const img = new Image();
-  if (img.decode) {
-    img.src = url;
-    return img.decode().then(() => Promise.resolve(img));
-  }
-  return new Promise((resolve, reject) => {
-    let max_try = 1000;
-    img.onload = () => {
-      if (img.complete) resolve(img);
-      else if (max_try-- > 0) setTimeout(img.onload, 0);
-      else reject();
-    };
-    img.onerror = () => {
-      reject();
-    };
-    img.src = url;
-  });
+	const img = new Image()
+	if (img.decode) {
+		img.src = url
+		return img.decode().then(() => Promise.resolve(img))
+	}
+	return new Promise((resolve, reject) => {
+		let max_try = 1000
+		img.onload = () => {
+			if (img.complete) resolve(img)
+			else if (max_try-- > 0) setTimeout(img.onload, 0)
+			else reject()
+		}
+		img.onerror = () => {
+			reject()
+		}
+		img.src = url
+	})
 }
 
 // tested using about:config (layout.css.devPixelsPerPx=<ratio>)
-function GetRealPixelRatio$({version, tab, width, height, scale}) {
-  let task = null, param = {format: 'jpeg', quality: 0};
-  if (version >= 59) {
-    if (version >= 82) {
-      // WTF: without this => real-ratio:3 crop-size:450x200 real-size:1350x603
-      param.rect = {x: 0, y: 0, width, height};
-    }
-    task = browser.tabs.captureTab(tab.id, param);
-  } else {
-    task = browser.tabs.captureVisibleTab(tab.windowId, param);
-  }
-  return task
-    .then(url => DecodeImage$(url))
-    .then(img => {
-      let [w, h] = [img.naturalWidth, img.naturalHeight];
-      // WTF: based on screenshot function of the built-in Developer Tools
-      if ([w, void(w - 1)].indexOf(Math.trunc(width * scale)) >= 0 &&
-          [h, void(h - 1)].indexOf(Math.trunc(height * scale)) >= 0) {
-        return scale;
-      }
-      let k = 2 ** Math.min(Math.ceil(Math.log2(Math.max(width, height))), 10);
-      let scl_w = w * k / width;
-      let scl_h = h * k / height;
-      console.info({
-        size: `${width}x${height}`,
-        real: `${w}x${h}`,
-        k, scl_w, scl_h
-      });
-      let scl = [
-        Math.floor(scl_w) / k, scl_w / k, Math.ceil(scl_w) / k,
-        Math.floor(scl_h) / k, scl_h / k, Math.ceil(scl_h) / k,
-      ].sort().reverse().find(scl => {
-        return Math.trunc(width * scl) === w && Math.trunc(height * scl) === h;
-      });
-      if (scl) {
-        console.info({scl});
-        return scl;
-      }
-      return scale;
-    });
+function GetRealPixelRatio$({ version, tab, width, height, scale }) {
+	let task = null,
+		param = { format: 'jpeg', quality: 0 }
+	if (version >= 59) {
+		if (version >= 82) {
+			// WTF: without this => real-ratio:3 crop-size:450x200 real-size:1350x603
+			param.rect = { x: 0, y: 0, width, height }
+		}
+		task = browser.tabs.captureTab(tab.id, param)
+	} else {
+		task = browser.tabs.captureVisibleTab(tab.windowId, param)
+	}
+	return task
+		.then((url) => DecodeImage$(url))
+		.then((img) => {
+			let [w, h] = [img.naturalWidth, img.naturalHeight]
+			// WTF: based on screenshot function of the built-in Developer Tools
+			if (
+				[w, void (w - 1)].indexOf(Math.trunc(width * scale)) >= 0 &&
+				[h, void (h - 1)].indexOf(Math.trunc(height * scale)) >= 0
+			) {
+				return scale
+			}
+			let k = 2 ** Math.min(Math.ceil(Math.log2(Math.max(width, height))), 10)
+			let scl_w = (w * k) / width
+			let scl_h = (h * k) / height
+			console.info({
+				size: `${width}x${height}`,
+				real: `${w}x${h}`,
+				k,
+				scl_w,
+				scl_h,
+			})
+			let scl = [
+				Math.floor(scl_w) / k,
+				scl_w / k,
+				Math.ceil(scl_w) / k,
+				Math.floor(scl_h) / k,
+				scl_h / k,
+				Math.ceil(scl_h) / k,
+			]
+				.sort()
+				.reverse()
+				.find((scl) => {
+					return Math.trunc(width * scl) === w && Math.trunc(height * scl) === h
+				})
+			if (scl) {
+				console.info({ scl })
+				return scl
+			}
+			console.log('GetRealPixelRatio():', scale)
+			return scale
+		})
 }
 
 // Fired if one of our context menu entries is clicked.
 function ContextMenuClicked(aInfo) {
-  SendMessage(aInfo.menuItemId);
+	SendMessage(aInfo.menuItemId)
 }
 
 // Fired if toolbar button is clicked
 function ToolbarButtonClicked() {
-  SendMessage('{}');
+	SendMessage('{}')
 }
 
 // Fired if shortcut is pressed
 function CommandPressed(name) {
-  const info = name.split('-');
-  SendMessage(JSON.stringify({region: info[0], format: info[1]}));
+	const info = name.split('-')
+	SendMessage(JSON.stringify({ region: info[0], format: info[1] }))
 }
 
 // Triggers UI update (toolbar button popup and context menu)
 async function UpdateUI() {
-  // Get menu list
-  const menus = await GetMenuList();
+	// Get menu list
+	const menus = await GetMenuList()
 
-  //
-  // Update toolbar button popup
-  //
+	//
+	// Update toolbar button popup
+	//
+	if (menus.length)
+		await browserAction.setPopup({ popup: 'popup/choose_format.html' })
+	else await browserAction.setPopup({ popup: '' })
 
-  if (menus.length)
-    await browserAction.setPopup({popup: "popup/choose_format.html"});
-  else
-    await browserAction.setPopup({popup: ""});
+	//
+	// Update context menu
+	//
+	await browser.contextMenus.removeAll()
 
-  //
-  // Update context menu
-  //
+	const prefs = await Storage.get()
 
-  await browser.contextMenus.removeAll();
+	if (prefs.show_contextmenu) {
+		const topmenu = browser.contextMenus.create({
+			id: '{}',
+			title: T$('extensionName'),
+			contexts: ['page'],
+		})
 
-  const prefs = await Storage.get();
-
-  if (prefs.show_contextmenu) {
-    const topmenu = browser.contextMenus.create({
-      id: '{}',
-      title: T$('extensionName'),
-      contexts: ['page'],
-    });
-
-    menus.forEach((entry) => {
-      browser.contextMenus.create({
-        id: entry.data,
-        title: entry.label,
-        contexts: ["page"],
-        parentId: topmenu
-      });
-    });
-  }
+		menus.forEach((entry) => {
+			browser.contextMenus.create({
+				id: entry.data,
+				title: entry.label,
+				contexts: ['page'],
+				parentId: topmenu,
+			})
+		})
+	}
 }
 
 // Register event listener to receive option update notifications and
 // content script requests
 browser.runtime.onMessage.addListener((data, sender) => {
-  // An option change with request for redraw happened
-  if (data.type === 'OptionsChanged' && data.redraw) return UpdateUI();
+	// An option change with request for redraw happened
+	if (data.type === 'OptionsChanged' && data.redraw) return UpdateUI()
 
-  // The content script requests us to take a screenshot
-  if (data.type === 'TakeScreenshot') return TakeScreenshot(data, sender.tab);
-});
+	if (data.type === 'PruneCache') return PruneCache()
+
+	// The content script requests us to take a screenshot
+	if (data.type === 'TakeScreenshot') return TakeScreenshot(data, sender.tab)
+})
 
 let CANVAS_ELEMENT = null
 async function TakeScreenshot(req, tab) {
-  // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Browser_support_for_JavaScript_APIs
-  const BROWSER_VERSION_MAJOR = parseInt((await browser.runtime.getBrowserInfo()).version, 10);
-  const badge = ['setTitle', 'setBadgeText', 'setBadgeBackgroundColor'].every(x => {
-    return x in browserAction;
-  });
+	// https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Browser_support_for_JavaScript_APIs
+	const BROWSER_VERSION_MAJOR = parseInt(
+		(await browser.runtime.getBrowserInfo()).version,
+		10
+	)
+	const badge = ['setTitle', 'setBadgeText', 'setBadgeBackgroundColor'].every(
+		(x) => {
+			return x in browserAction
+		}
+	)
 
-  const mutex = new Mutex({lock_time: 1000 * 60 * 5});
-  const key = 'browserAction-' + tab.id;
-  const nid = Date.now();
+	const mutex = new Mutex({ lock_time: 1000 * 60 * 5 })
+	const key = 'browserAction-' + tab.id
+	const nid = Date.now()
 
-  const format = {
-    png: ['png', 'png', 'image/png'],
-    jpg: ['jpg', 'jpeg', 'image/jpeg'],
-    copy: ['png', 'png', 'image/png'],
-  }[req.format];
-  const prefs = await Storage.get();
-  const quality = prefs.jpegquality;
+	const format = {
+		png: ['png', 'png', 'image/png'],
+		jpg: ['jpg', 'jpeg', 'image/jpeg'],
+		copy: ['png', 'png', 'image/png'],
+	}[req.format]
+	const prefs = await Storage.get()
+	const quality = prefs.jpegquality
 
-  let restoreScrollPosition = () => Promise.resolve();
-  try {
-    if (!(await mutex.lock(key, {retry: false}))) {
-      return;
-    }
-    await browserAction.disable(tab.id);
+	let restoreScrollPosition = () => Promise.resolve()
+	try {
+		if (!(await mutex.lock(key, { retry: false }))) {
+			return
+		}
+		await browserAction.disable(tab.id)
 
-    // Maximum size is limited!
-    // https://developer.mozilla.org/en-US/docs/Web/HTML/Element/canvas#maximum_canvas_size
-    // https://hg.mozilla.org/mozilla-central/file/93c7ed3f5606865707e5ebee8709b13ce0c2e220/dom/canvas/CanvasRenderingContext2D.cpp#l4814
-    // https://hg.mozilla.org/mozilla-central/file/93c7ed3f5606865707e5ebee8709b13ce0c2e220/gfx/2d/Factory.cpp#l326
-    // WTF: animation sucks your eyeballs out during multiple screen captures
-    const {vw, vh, pw, ph, bw, bh, width: rw, height: rh} = req;
-    const { direction: dir} = req;
+		// Maximum size is limited!
+		// https://developer.mozilla.org/en-US/docs/Web/HTML/Element/canvas#maximum_canvas_size
+		// https://hg.mozilla.org/mozilla-central/file/93c7ed3f5606865707e5ebee8709b13ce0c2e220/dom/canvas/CanvasRenderingContext2D.cpp#l4814
+		// https://hg.mozilla.org/mozilla-central/file/93c7ed3f5606865707e5ebee8709b13ce0c2e220/gfx/2d/Factory.cpp#l326
+		// WTF: animation sucks your eyeballs out during multiple screen captures
+		const { vw, vh, pw, ph, bw, bh, width: rw, height: rh } = req
+		const { direction: dir } = req
 
-    // tested using about:config (privacy.resistFingerprinting=[true|false])
-    const scale = await GetRealPixelRatio$({
-      version: BROWSER_VERSION_MAJOR,
-      tab: tab,
-      width: vw + bw,
-      height: vh + bh,
-      scale: req.scale,
-    });
+		// tested using about:config (privacy.resistFingerprinting=[true|false])
+		const scale = await GetRealPixelRatio$({
+			version: BROWSER_VERSION_MAJOR,
+			tab: tab,
+			width: vw + bw,
+			height: vh + bh,
+			scale: req.scale,
+		})
 
-    const limits = [32767 / scale, 472907776 / (scale * scale)].map(Math.trunc);
-    const one_canvas = Math.max(rw, rh) <= limits[0] && rw * rh <= limits[1];
+		const limits = [32767 / scale, 472907776 / (scale * scale)].map(Math.trunc)
+		const one_canvas = Math.max(rw, rh) <= limits[0] && rw * rh <= limits[1]
 
-    const [totalWidth, totalHeight] = [rw, rh].map(x => Math.trunc(x * scale));
-    let content = null;
-    let canvas = null
-    if (CANVAS_ELEMENT && CANVAS_ELEMENT instanceof HTMLCanvasElement) {
+		const [totalWidth, totalHeight] = [rw, rh].map((x) => Math.trunc(x * scale))
+		let content = null
+		let canvas = null
+		if (CANVAS_ELEMENT && CANVAS_ELEMENT instanceof HTMLCanvasElement) {
 			canvas = CANVAS_ELEMENT
 		} else {
 			console.log('Creating new drawing canvas')
@@ -356,58 +374,60 @@ async function TakeScreenshot(req, tab) {
 }
 
 function DebugDraw(ctx, info) {
-  if (!DEBUG_DRAW) return;
-  ctx.save();
-  ctx.scale(info.scale, info.scale);
-  ctx.fillStyle = ['rgba(255,0,0,0.1)', 'rgba(0,255,0,0.1)', 'rgba(0,0,255,0.1)'][info.n % 3];
-  ctx.font = `${50 * info.scale}px sans-serif`;
-  ctx.textBaseline = 'top';
-  ctx.strokeStyle = '#000';
-  ctx.setLineDash([5, 5]);
-  ctx.lineWidth = 1;
-  ctx.fillRect(info.x, info.y, info.w, info.h);
-  ctx.strokeRect(info.x, info.y, info.w, info.h);
-  ctx.setLineDash([]);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#fff';
-  ctx.strokeText(info.n, info.x, info.y, info.w);
-  ctx.fillStyle = '#000';
-  ctx.fillText(info.n, info.x, info.y, info.w);
-  ctx.restore();
+	if (!DEBUG_DRAW) return
+	ctx.save()
+	ctx.scale(info.scale, info.scale)
+	ctx.fillStyle = [
+		'rgba(255,0,0,0.1)',
+		'rgba(0,255,0,0.1)',
+		'rgba(0,0,255,0.1)',
+	][info.n % 3]
+	ctx.font = `${50 * info.scale}px sans-serif`
+	ctx.textBaseline = 'top'
+	ctx.strokeStyle = '#000'
+	ctx.setLineDash([5, 5])
+	ctx.lineWidth = 1
+	ctx.fillRect(info.x, info.y, info.w, info.h)
+	ctx.strokeRect(info.x, info.y, info.w, info.h)
+	ctx.setLineDash([])
+	ctx.lineWidth = 2
+	ctx.strokeStyle = '#fff'
+	ctx.strokeText(info.n, info.x, info.y, info.w)
+	ctx.fillStyle = '#000'
+	ctx.fillText(info.n, info.x, info.y, info.w)
+	ctx.restore()
 }
 
 // Migrates old "only one possible" preferences to new "multi select" model
 async function MigrateSettings() {
-  const prefs = await Storage.get();
-  const newprefs = {};
-  if ("region" in prefs) {
-    if (prefs.region == "manual")
-      newprefs.regions = ["full", "viewport", "selection"];
-    else
-      newprefs.regions = [prefs.region];
-    await Storage.remove("region");
-  }
-  if ("format" in prefs) {
-    if (prefs.format == "manual")
-      newprefs.formats = ["png", "jpg", "copy"];
-    else
-      newprefs.formats = [prefs.format];
-    await Storage.remove("format");
-  }
-  await Storage.set(newprefs);
+	const prefs = await Storage.get()
+	const newprefs = {}
+	if ('region' in prefs) {
+		if (prefs.region == 'manual')
+			newprefs.regions = ['full', 'viewport', 'selection']
+		else newprefs.regions = [prefs.region]
+		await Storage.remove('region')
+	}
+	if ('format' in prefs) {
+		if (prefs.format == 'manual') newprefs.formats = ['png', 'jpg', 'copy']
+		else newprefs.formats = [prefs.format]
+		await Storage.remove('format')
+	}
+	await Storage.set(newprefs)
 }
 
 let userTheme = null
 async function getUserTheme(windowID, invalidate = false) {
-  // TODO: rerun function when user changes theme
-  // TODO: add setting to tweak what colors will be used
+	// TODO: rerun function when user changes theme
+	// TODO: add setting to tweak what colors will be used
 	if (userTheme && !invalidate) return userTheme
 	const theme = await browser.theme.getCurrent(windowID)
-  if (theme.colors?.popup) {
+	console.log('User theme:', theme)
+	if (theme.colors?.popup) {
 		// We use the popup background color as this one often match the background of the toolbar
 		const [r, g, b] = anyToRgba(theme.colors.popup)
 		theme.colors.toolbar = `rgba(${r},${g},${b},0.25)`
-  } else if (theme.colors?.toolbar) {
+	} else if (theme.colors?.toolbar) {
 		// Default to toolbar
 		const [r, g, b] = anyToRgba(theme.colors.toolbar)
 		theme.colors.toolbar = `rgba(${r},${g},${b},0.25)`
@@ -423,47 +443,51 @@ const bufferBottom = []
 const bufferSize = 5 // current, last 2, next 2 images
 
 // TODO: ensure bufferSize will be even or allow custom sizes for next and bottom
-const ALLOWED_BUFFER_SIZE_PER_POSITION = (bufferSize - 1) / 2;
+const ALLOWED_BUFFER_SIZE_PER_POSITION = (bufferSize - 1) / 2
 
-var bgAliment = null
+let bgAliment = null
 function getBufferSizeMemo(thisBufferSize) {
-  if (thisBufferSize === bufferSize && bgAliment) return bgAliment;
-  
-  bgAliment = Array(bufferSize).fill('center top')
-  return bgAliment;
+	if (thisBufferSize === bufferSize && bgAliment?.length) return bgAliment
+
+	bgAliment = Array(bufferSize).fill('center top')
+	return bgAliment
 }
 
 // TODO: implement scrollDirection, change background position based on scroll
 // TODO: cache between backgrounds tabs
-function applyTheme(windowID, base64Url, scrollDirection) {
+async function applyTheme(windowID, base64Url, scrollDirection) {
 	/*
 	 * To pre-load images using the background property hack,
 	 * the buffering works in 3 steps:
-   *  1) On first load, whe don't need to do anything as the background
-   *     will be inherited from the theme-color
+	 *  1) On first load, whe don't need to do anything as the background
+	 *     will be inherited from the theme-color
 	 */
-  
-  if (bufferCurrent) {
-    if (bufferTop.length === ALLOWED_BUFFER_SIZE_PER_POSITION) {
+
+	if (bufferCurrent) {
+		if (bufferTop.length === ALLOWED_BUFFER_SIZE_PER_POSITION) {
 			// Replace first element with the next
 			bufferTop.shift()
-    }
-    // Push next background
-    bufferTop.push(bufferCurrent)
-  }
+		}
+		// Push next background
+		bufferTop.push(bufferCurrent)
+	}
 
 	bufferBottom.push(base64Url) // Push as last element
-  if (bufferBottom.length === ALLOWED_BUFFER_SIZE_PER_POSITION) {
+	if (bufferBottom.length === ALLOWED_BUFFER_SIZE_PER_POSITION) {
 		// Pop first element and assing to current
 		bufferCurrent = bufferBottom.shift()
-  }
+	}
 
-  // Current buffer is the background the user will see,
-  // bufferBottom are the cached backgrounds so can be replaced without flikering,
-  // and at last are the top background as cache if user scrolls up.
-  const backgrounds = [bufferCurrent, ...bufferBottom].filter((n) => n)
-  
-  const theme = {
+	// Current buffer is the background the user will see,
+	// bufferBottom are the cached backgrounds so can be replaced without flikering,
+	// and at last are the top background as cache if user scrolls up.
+	const backgrounds = [bufferCurrent, ...bufferBottom].filter((n) => n)
+
+	// console.log('userTheme: ', userTheme)
+	const idTime = Date.now()
+	console.time('draw_timer_' + idTime)
+
+	const theme = {
 		// Transparent pixel gif:
 		// data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==
 		colors: {
@@ -474,10 +498,7 @@ function applyTheme(windowID, base64Url, scrollDirection) {
 			 * #0000 is used instead of directly using "transparent" as some fields verify the opacity and reject if transparent.
 			 * See: https://github.com/mozilla/gecko-dev/blob/master/toolkit/modules/LightweightThemeConsumer.sys.mjs
 			 */
-			frame: '#0000', // TODO: use user theme
-			// * accentcolor was replaced by frame in later versions (Firefox >= 70).
-			// * If defined, will spam the console with deprecation messages
-			accentcolor: '#0000',
+			// frame: '#0000', // TODO: use user theme
 			// toolbar: '#0000', // bottom toolbar container + bookmarks
 			toolbar_field: 'rgba(0,0,0,.25)', // URL bar
 			toolbar_top_separator: 'transparent',
@@ -494,16 +515,23 @@ function applyTheme(windowID, base64Url, scrollDirection) {
 		},
 	}
 	browser.theme.update(windowID, theme)
+	console.timeEnd('draw_timer_' + idTime)
+}
+
+function PruneCache() {
+	bufferCurrent = null
+	bufferBottom.length = 0
+	bufferTop.length = 0
 }
 
 async function Startup() {
-  await MigrateSettings();
-  await UpdateUI();
+	await MigrateSettings()
+	await UpdateUI()
 }
 
 // Register event listeners
-browser.contextMenus.onClicked.addListener(ContextMenuClicked);
-browser.browserAction.onClicked.addListener(ToolbarButtonClicked);
-browser.commands.onCommand.addListener(CommandPressed);
+browser.contextMenus.onClicked.addListener(ContextMenuClicked)
+browser.browserAction.onClicked.addListener(ToolbarButtonClicked)
+browser.commands.onCommand.addListener(CommandPressed)
 
-Startup();
+Startup()

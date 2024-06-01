@@ -20,10 +20,10 @@
 'use strict';
 
 async function CreateButtons() {
-  let menus = await GetMenuList();
+  const menus = await GetMenuList();
 
   menus.forEach((entry) => {
-    let div = document.createElement('div');
+    const div = document.createElement('div');
     div.setAttribute('class', 'button');
     div.setAttribute('data-settings', entry.data);
     div.textContent = entry.label;
