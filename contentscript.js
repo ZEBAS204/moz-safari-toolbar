@@ -347,9 +347,18 @@ async function DrawWindow(req) {
   //});
 }
 
+function pruneCache() {
+  browser.runtime.sendMessage({
+    type: 'pruneCache',
+  })
+}
+
 function setupDynamicEventUpdates() {
     console.log('setupDynamicEventUpdates()')
-		document.addEventListener("pageshow", screenshotPage);
+  document.addEventListener("pageshow", () => {
+    pruneCache()
+    screenshotPage()
+  });
 		document.addEventListener("click", screenshotPage);
 		document.addEventListener("resize", screenshotPage);
 		document.addEventListener("scroll", screenshotPage);
