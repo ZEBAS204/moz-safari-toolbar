@@ -43,7 +43,12 @@ This extension uses the [Theme API](https://developer.mozilla.org/en-US/docs/Moz
 2. Migrate it into a *"chrome profile plugin"* (like [CustomJSforFx](https://github.com/Aris-t2/CustomJSforFx)):
    > The main focus of this extension is allowing *non-power-users* to enjoy the visuals with a simple click.
 
+3. Use [`-moz-element` CSS function](https://developer.mozilla.org/en-US/docs/Web/CSS/element) together with [`userChrome.css`](https://www.userchrome.org/) to render the background image on the tab bar element:
+   > This is not possible because of how Firefox CSS engine handles tabs. Each tab is outside of the CSS context of the UI.
+
 ### Known issues
+
+- Use `set` and `map` to reduce JavaScript garbage collector activity.
 
 - Bottom search bar inherits the background.
 
