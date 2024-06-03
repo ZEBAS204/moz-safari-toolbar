@@ -229,43 +229,60 @@ async function TakeScreenshot(req, tab) {
 			canvas.id = 'firefox-canvas-screenshot' // TODO: add random id
 			CANVAS_ELEMENT = canvas
 		}
-    content = canvas.getContext('2d', { alpha: false, willReadFrequently: true })
-    canvas.width = totalWidth + bw;
-    canvas.height = totalHeight + bh;
-    content.imageSmoothingEnabled = false; //! Final image will be blurred
-    // content.filter = 'blur(10px)'; // gaussian blur, later need to be reescaled to fix alpha blur offset
+		content = canvas.getContext('2d', {
+			alpha: false,
+			willReadFrequently: true,
+		})
+		canvas.width = totalWidth + bw
+		canvas.height = totalHeight + bh
+		content.imageSmoothingEnabled = false //! Final image will be blurred
   
-    const use_native = (BROWSER_VERSION_MAJOR >= 82 || (scale === 1 && CanvasRenderingContext2D.prototype.drawWindow));
+		const use_native =
+			BROWSER_VERSION_MAJOR >= 82 ||
+			(scale === 1 && CanvasRenderingContext2D.prototype.drawWindow)
 
-    console.info({
-      BROWSER_VERSION_MAJOR, req, scale, one_canvas,
-      use_native
-    });
+		console.info({
+			BROWSER_VERSION_MAJOR,
+			req,
+			scale,
+			one_canvas,
+			use_native,
+		})
 
-    const [mw, mh] = (() => {
-      // WTF: browser.tab.captureTab and DrawWindow:
-      //      glitches happen on large capture area
-      //      happens when scale != window.devicePixelRatio ?
-      //      test page: https://en.wikipedia.org/wiki/Firefox
-      if (use_native) {
-        if (false && BROWSER_VERSION_MAJOR >= 82 && scale === window.devicePixelRatio) {
-          return [rw, rh].map(x => Math.min(x, limits[0]));
-        } else {
-          return [Math.min(rw, limits[0], 4095), Math.min(rh, limits[0], 16383)];
-        }
-      } else {
-        return [Math.min(vw, limits[0], 4095), Math.min(vh, limits[0], 16383)];
-      }
-    })();
+		const [mw, mh] = (() => {
+			// WTF: browser.tab.captureTab and DrawWindow:
+			//      glitches happen on large capture area
+			//      happens when scale != window.devicePixelRatio ?
+			//      test page: https://en.wikipedia.org/wiki/Firefox
+			if (use_native) {
+				if (
+					false &&
+					BROWSER_VERSION_MAJOR >= 82 &&
+					scale === window.devicePixelRatio
+				) {
+					return [rw, rh].map((x) => Math.min(x, limits[0]))
+				} else {
+					return [Math.min(rw, limits[0], 4095), Math.min(rh, limits[0], 16383)]
+				}
+			} else {
+				return [Math.min(vw, limits[0], 4095), Math.min(vh, limits[0], 16383)]
+			}
+		})()
 
-    if (badge) {
-      await browserAction.setTitle({title: T$('badge_capturing'), tabId: tab.id});
-      await browserAction.setBadgeBackgroundColor({color: 'red', tabId: tab.id});
-    }
-    const jobs = new JobQueue();
-    const decoding = new JobQueue();
-    let count = Math.ceil(rw / mw) * Math.ceil(rh / mh);
-    let debug_n = 0;
+		if (badge) {
+			await browserAction.setTitle({
+				title: T$('badge_capturing'),
+				tabId: tab.id,
+			})
+			await browserAction.setBadgeBackgroundColor({
+				color: 'red',
+				tabId: tab.id,
+			})
+		}
+		const jobs = new JobQueue()
+		const decoding = new JobQueue()
+		let count = Math.ceil(rw / mw) * Math.ceil(rh / mh)
+		let debug_n = 0
 
     for (let y = 0; y < rh; y += mh) {
       let h = (y + mh <= rh ? mh : rh - y);
@@ -338,13 +355,16 @@ async function TakeScreenshot(req, tab) {
     }
     await jobs.serial().then(restoreScrollPosition);
 
-    if (badge) {
-      await browserAction.setTitle({title: T$('badge_saving'), tabId: tab.id});
-      await browserAction.setBadgeText({text: '...', tabId: tab.id});
-      await browserAction.setBadgeBackgroundColor({color: 'green', tabId: tab.id});
-    }
-    await browserAction.enable(tab.id);
-    mutex.unlock(key);
+		if (badge) {
+			await browserAction.setTitle({ title: T$('badge_saving'), tabId: tab.id })
+			await browserAction.setBadgeText({ text: '...', tabId: tab.id })
+			await browserAction.setBadgeBackgroundColor({
+				color: 'green',
+				tabId: tab.id,
+			})
+		}
+		await browserAction.enable(tab.id)
+		mutex.unlock(key)
 
     await decoding.parallel();
       //console.log("BASE64 IMG:\n", content.canvas.toDataURL("image/jpeg"));
