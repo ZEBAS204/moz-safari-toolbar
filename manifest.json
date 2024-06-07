@@ -12,14 +12,12 @@
   },
   "background": {
     "scripts": [
-      "utils/storage.js",
       "_globals.js",
-      "lib/crc32.js",
-      "lib/stackblur.js",
+      "utils/colors.js",
+      "utils/storage.js",
       "lib/worker_wasm.js",
       "imagecomments.js",
-      "background.js",
-      "utils/colors.js"
+      "background.js"
     ]
   },
   "browser_action": {

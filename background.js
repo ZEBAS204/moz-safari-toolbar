@@ -19,36 +19,6 @@
 
 ;('use strict')
 
-/**
- * WebAssembly blur lib service worker
- */
-const worker = new Worker('/lib/worker-wasm.js') // know error, remove worker integration
-console.log('Is worker supported?', 'serviceWorker' in navigator)
-//! console.log('Is wasm lib loaded?', lib)
-
-// Use worker to avoid blocking other extensions
-worker.onerror = (event) => {
-	// console.error('Worker error', event)
-	worker.terminate()
-}
-
-worker.onmessageerror = (event) => {
-	console.error(`Error receiving message from worker:`, event)
-	worker.terminate()
-}
-
-worker.onmessage = (event) => {
-	const message = event.data
-	if (message.type === 'error') {
-		console.error('Worker error message:', message.message)
-		console.error('Worker error stack:', message.stack)
-	} else {
-		console.log('Worker message', message)
-		content = message
-	}
-	//worker.terminate()
-}
-
 // TODO: rename blur radius and make it configurable
 let DEBUG_DRAW = false
 const TODO_BLUR_RADIUS = 10
@@ -350,98 +320,13 @@ async function TakeScreenshot(req, tab) {
 					jobs.push(() => browser.tabs.sendMessage(tab.id, opts))
 				}
 
-				let rect = { x, y, w, h }
 				console.time('decoding')
 				jobs.push((url) => {
-					//* console.log('Decoding url:', url)
-					let n = ++debug_n
 					return decoding.push(() => {
-						//console.log('Worker?', worker)
-						/*worker.postMessage({
-							data: url,
-							blurRadius: TODO_BLUR_RADIUS,
-						})
-						*/
 						const blurredBg = lib(url, TODO_BLUR_RADIUS)
-						// console.log('Blurred:\n', blurredBg)
 						content = blurredBg
 						return
 					})
-
-					/*
-					decoding.push(() => {
-						return DecodeImage$(url).then((img) => {
-							let { x, y, w, h } = rect
-							let scl_w = use_native ? scale : img.naturalWidth / (vw + bw)
-							let scl_h = use_native ? scale : img.naturalHeight / (vh + bh)
-
-							const blurRadius = TODO_BLUR_RADIUS * 2
-							// Doesn't matter if the image contains alpha or not, because we are applying gaussian blur,
-							// the drawn image edges will contract because of the applied blur.
-							// To prevent this, we scale the image a bit so that artifacts are not visible
-							console.log('[!] Image data: ', img)
-							content.drawImage(
-								img,
-								// bw, bh are used to fix the removed scrollbar missing space
-								pos.x * scl_w - bw - blurRadius,
-								pos.y * scl_h - bh - blurRadius,
-								w * scl_w + bw + blurRadius * 2,
-								h * scl_h + bh + blurRadius * 2
-							)
-							//
-              // StackBlur.canvasRGB(
-              //   content.canvas,
-              //   0,
-              //   0,
-              //   content.canvas.width,
-              //   content.canvas.height,
-              //   TODO_BLUR_RADIUS
-              // )
-
-							//* Fast blur implementation
-							let idata = content.getImageData(
-									0,
-									0,
-									content.canvas.width,
-									content.canvas.height
-								), // assumes ctx/w/h to be defined
-								rgba = idata.data,
-								len = content.canvas.width * content.canvas.height,
-								radius = 2, //TODO: NO IDEA HOW TO FIX OVERLAPPING AND REPEATED SQUARES...
-								rSrc = new Uint8Array(len), // source arrays
-								gSrc = new Uint8Array(len),
-								bSrc = new Uint8Array(len),
-								// target arrays
-								rTrg = new Uint8Array(len), // source arrays
-								gTrg = new Uint8Array(len),
-								bTrg = new Uint8Array(len),
-								// define target arrays the same way as above
-								i = 0,
-								offset = 0
-
-							for (; i < len; i++) {
-								rSrc[i] = rgba[offset++]
-								gSrc[i] = rgba[offset++]
-								bSrc[i] = rgba[offset++]
-							}
-
-							//? source channel, target channel, width, height, radius
-							gaussBlur_4(rSrc, rTrg, w, h, radius)
-							gaussBlur_4(gSrc, gTrg, w, h, radius)
-							gaussBlur_4(bSrc, bTrg, w, h, radius)
-
-							for (i = 0, offset = 0; i < len; i++) {
-								rgba[offset++] = rTrg[i]
-								rgba[offset++] = gTrg[i]
-								rgba[offset++] = bTrg[i]
-							}
-
-							content.putImageData(idata, 0, 0)
-
-							DebugDraw(content, { x, y, w, h, scale, n })
-						})
-					})
-					*/
 				})
 			}
 		}
