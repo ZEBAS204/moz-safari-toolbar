@@ -16,6 +16,7 @@
       "_globals.js",
       "lib/crc32.js",
       "lib/stackblur.js",
+      "lib/worker_wasm.js",
       "imagecomments.js",
       "background.js",
       "utils/colors.js"
@@ -44,6 +45,10 @@
         "contentscript.js"
       ]
     }
+  ],
+  "content_security_policy": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+  "web_accessible_resources": [
+    "lib/lib_bg.wasm"
   ],
   "options_ui": {
     "page": "options.html",
@@ -84,7 +89,8 @@
     "notifications",
     "storage",
     "tabs",
-    "theme"
+    "theme",
+    "scripting"
   ],
   "default_locale": "en"
 }

@@ -19,6 +19,36 @@
 
 ;('use strict')
 
+/**
+ * WebAssembly blur lib service worker
+ */
+const worker = new Worker('/lib/worker-wasm.js') // know error, remove worker integration
+console.log('Is worker supported?', 'serviceWorker' in navigator)
+//! console.log('Is wasm lib loaded?', lib)
+
+// Use worker to avoid blocking other extensions
+worker.onerror = (event) => {
+	// console.error('Worker error', event)
+	worker.terminate()
+}
+
+worker.onmessageerror = (event) => {
+	console.error(`Error receiving message from worker:`, event)
+	worker.terminate()
+}
+
+worker.onmessage = (event) => {
+	const message = event.data
+	if (message.type === 'error') {
+		console.error('Worker error message:', message.message)
+		console.error('Worker error stack:', message.stack)
+	} else {
+		console.log('Worker message', message)
+		content = message
+	}
+	//worker.terminate()
+}
+
 // TODO: rename blur radius and make it configurable
 let DEBUG_DRAW = false
 const TODO_BLUR_RADIUS = 10
@@ -156,6 +186,7 @@ async function UpdateUI() {
 
 // Register event listener to receive option update notifications and
 // content script requests
+//* browser.tabs.onActivated.addListener(update); // When switch tabs
 browser.runtime.onMessage.addListener((data, sender) => {
 	// An option change with request for redraw happened
 	if (data.type === 'OptionsChanged' && data.redraw) return UpdateUI()
@@ -236,7 +267,7 @@ async function TakeScreenshot(req, tab) {
 		canvas.width = totalWidth + bw
 		canvas.height = totalHeight + bh
 		content.imageSmoothingEnabled = false //! Final image will be blurred
-  
+
 		const use_native =
 			BROWSER_VERSION_MAJOR >= 82 ||
 			(scale === 1 && CanvasRenderingContext2D.prototype.drawWindow)
@@ -284,76 +315,138 @@ async function TakeScreenshot(req, tab) {
 		let count = Math.ceil(rw / mw) * Math.ceil(rh / mh)
 		let debug_n = 0
 
-    for (let y = 0; y < rh; y += mh) {
-      let h = (y + mh <= rh ? mh : rh - y);
-      for (let x = 0; x < rw; x += mw) {
-        let w = (x + mw <= rw ? mw : rw - x);
-        let left = req.left + x;
-        let top = req.top + y;
-        if (badge) {
-          jobs.push(() => {
-            // no waiting since capturing is in serial order; unimportant text
-            browserAction.setBadgeText({text: String(count--), tabId: tab.id});
-          });
-        }
-        const _sx = dir.x > 0 ? left : Math.min(-(pw - left) + vw, vw - w);
-        const _sy = dir.y > 0 ? top : Math.min(-(ph - top) + vh, vh - h);
-        const pos = { x: 0, y: 0 };
-        
-        if (BROWSER_VERSION_MAJOR >= 82) {
-          const opts = {
-            format: format[1],
-            quality: one_canvas ? quality : 100,
-            rect: {x: _sx, y: _sy, width: w, height: h},
-            scale: scale,
-          };
-          jobs.push(() => browser.tabs.captureTab(tab.id, opts));
-        } else {
-          // doesn't seem to support high dpi
-          const opts = {
-            type: 'DrawWindow',
-            format: format[2],
-            quality: one_canvas ? quality : 100,
-            rect: {x: _sx, y: _sy, width: w, height: h},
-          };
-          jobs.push(() => browser.tabs.sendMessage(tab.id, opts));
-        }
-        
-        let rect = {x, y, w, h};
-        jobs.push(url => {
-          let n = ++debug_n;
-          decoding.push(() => {
-            return DecodeImage$(url).then(img => {
-              let {x, y, w, h} = rect;
-              let scl_w = use_native ? scale : img.naturalWidth / (vw + bw);
-              let scl_h = use_native ? scale : img.naturalHeight / (vh + bh);
+		for (let y = 0; y < rh; y += mh) {
+			let h = y + mh <= rh ? mh : rh - y
+			for (let x = 0; x < rw; x += mw) {
+				let w = x + mw <= rw ? mw : rw - x
+				let left = req.left + x
+				let top = req.top + y
+				if (badge) {
+					jobs.push(() => {
+						// no waiting since capturing is in serial order; unimportant text
+						browserAction.setBadgeText({ text: String(count--), tabId: tab.id })
+					})
+				}
+				const _sx = dir.x > 0 ? left : Math.min(-(pw - left) + vw, vw - w)
+				const _sy = dir.y > 0 ? top : Math.min(-(ph - top) + vh, vh - h)
+				const pos = { x: 0, y: 0 }
 
-              const blurRadius = TODO_BLUR_RADIUS * 2
-              // Doesn't matter if the image contains alpha or not, because we are applying gaussian blur,
-              // the drawn image edges will contract because of the applied blur.
-              // To prevent this, we scale the image a bit so that artifacts are not visible
-              content.drawImage(img,
-                // bw, bh are used to fix the removed scrollbar missing space
-                pos.x * scl_w - bw - blurRadius,
-                pos.y * scl_h - bh - blurRadius,
-                w * scl_w + bw + blurRadius * 2,
-                h * scl_h + bh + blurRadius * 2,
-              );
-              StackBlur.canvasRGB(
-                content.canvas,
-                0,
-                0,
-                content.canvas.width,
-                content.canvas.height,
-                TODO_BLUR_RADIUS
-              )
-                DebugDraw(content, {x, y, w, h, scale, n});
-            });
-          });
-        });
-      }
-    }
-    await jobs.serial().then(restoreScrollPosition);
+				if (BROWSER_VERSION_MAJOR >= 82) {
+					const opts = {
+						format: format[1],
+						quality: one_canvas ? quality : 100,
+						rect: { x: _sx, y: _sy, width: w, height: h },
+						scale: scale,
+					}
+					jobs.push(() => browser.tabs.captureTab(tab.id, opts))
+				} else {
+					// doesn't seem to support high dpi
+					const opts = {
+						type: 'DrawWindow',
+						format: format[2],
+						quality: one_canvas ? quality : 100,
+						rect: { x: _sx, y: _sy, width: w, height: h },
+					}
+					jobs.push(() => browser.tabs.sendMessage(tab.id, opts))
+				}
+
+				let rect = { x, y, w, h }
+				console.time('decoding')
+				jobs.push((url) => {
+					//* console.log('Decoding url:', url)
+					let n = ++debug_n
+					return decoding.push(() => {
+						//console.log('Worker?', worker)
+						/*worker.postMessage({
+							data: url,
+							blurRadius: TODO_BLUR_RADIUS,
+						})
+						*/
+						const blurredBg = lib(url, TODO_BLUR_RADIUS)
+						// console.log('Blurred:\n', blurredBg)
+						content = blurredBg
+						return
+					})
+
+					/*
+					decoding.push(() => {
+						return DecodeImage$(url).then((img) => {
+							let { x, y, w, h } = rect
+							let scl_w = use_native ? scale : img.naturalWidth / (vw + bw)
+							let scl_h = use_native ? scale : img.naturalHeight / (vh + bh)
+
+							const blurRadius = TODO_BLUR_RADIUS * 2
+							// Doesn't matter if the image contains alpha or not, because we are applying gaussian blur,
+							// the drawn image edges will contract because of the applied blur.
+							// To prevent this, we scale the image a bit so that artifacts are not visible
+							console.log('[!] Image data: ', img)
+							content.drawImage(
+								img,
+								// bw, bh are used to fix the removed scrollbar missing space
+								pos.x * scl_w - bw - blurRadius,
+								pos.y * scl_h - bh - blurRadius,
+								w * scl_w + bw + blurRadius * 2,
+								h * scl_h + bh + blurRadius * 2
+							)
+							//
+              // StackBlur.canvasRGB(
+              //   content.canvas,
+              //   0,
+              //   0,
+              //   content.canvas.width,
+              //   content.canvas.height,
+              //   TODO_BLUR_RADIUS
+              // )
+
+							//* Fast blur implementation
+							let idata = content.getImageData(
+									0,
+									0,
+									content.canvas.width,
+									content.canvas.height
+								), // assumes ctx/w/h to be defined
+								rgba = idata.data,
+								len = content.canvas.width * content.canvas.height,
+								radius = 2, //TODO: NO IDEA HOW TO FIX OVERLAPPING AND REPEATED SQUARES...
+								rSrc = new Uint8Array(len), // source arrays
+								gSrc = new Uint8Array(len),
+								bSrc = new Uint8Array(len),
+								// target arrays
+								rTrg = new Uint8Array(len), // source arrays
+								gTrg = new Uint8Array(len),
+								bTrg = new Uint8Array(len),
+								// define target arrays the same way as above
+								i = 0,
+								offset = 0
+
+							for (; i < len; i++) {
+								rSrc[i] = rgba[offset++]
+								gSrc[i] = rgba[offset++]
+								bSrc[i] = rgba[offset++]
+							}
+
+							//? source channel, target channel, width, height, radius
+							gaussBlur_4(rSrc, rTrg, w, h, radius)
+							gaussBlur_4(gSrc, gTrg, w, h, radius)
+							gaussBlur_4(bSrc, bTrg, w, h, radius)
+
+							for (i = 0, offset = 0; i < len; i++) {
+								rgba[offset++] = rTrg[i]
+								rgba[offset++] = gTrg[i]
+								rgba[offset++] = bTrg[i]
+							}
+
+							content.putImageData(idata, 0, 0)
+
+							DebugDraw(content, { x, y, w, h, scale, n })
+						})
+					})
+					*/
+				})
+			}
+		}
+		await jobs.serial().then(restoreScrollPosition)
+		console.timeEnd('decoding')
 
 		if (badge) {
 			await browserAction.setTitle({ title: T$('badge_saving'), tabId: tab.id })
@@ -366,31 +459,39 @@ async function TakeScreenshot(req, tab) {
 		await browserAction.enable(tab.id)
 		mutex.unlock(key)
 
-    await decoding.parallel();
-      //console.log("BASE64 IMG:\n", content.canvas.toDataURL("image/jpeg"));
-      const buff = await (await fetch(content.canvas.toDataURL("image/jpg", quality)));
-      applyTheme(tab.windowId, buff.url)
-      content = buff.arrayBuffer();
-  } catch (err) {
-    console.error(err);
-    alarm(`Failed to generate image\nReason: ${err}`, {id: nid});
-    restoreScrollPosition().catch(ignore);
-  } finally {
-    if (await mutex.lock(key, {retry: false})) {
-      if (badge) {
-        await browserAction.setTitle({title: '', tabId: tab.id});
-        await browserAction.setBadgeText({text: '', tabId: tab.id});
-        try {
-          await browserAction.setBadgeBackgroundColor({color: null, tabId: tab.id});
-        } catch (err) {
-          await browserAction.setBadgeBackgroundColor({color: '', tabId: tab.id});
-        }
-      }
-      await browserAction.enable(tab.id);
-      mutex.unlock(key);
-    }
-    mutex.unlock('worker');
-  }
+		await decoding.parallel()
+		//console.log("BASE64 IMG:\n", content.canvas.toDataURL("image/jpeg"));
+		//const buff = await fetch(content.canvas.toDataURL('image/jpg', quality))
+		//applyTheme(tab.windowId, buff.url)
+		// content = buff.arrayBuffer()
+		const buff = content //content already is a base64 jpeg image
+		applyTheme(tab.windowId, buff)
+	} catch (err) {
+		console.error(err)
+		alarm(`Failed to generate image\nReason: ${err}`, { id: nid })
+		restoreScrollPosition().catch(ignore)
+	} finally {
+		if (await mutex.lock(key, { retry: false })) {
+			if (badge) {
+				await browserAction.setTitle({ title: '', tabId: tab.id })
+				await browserAction.setBadgeText({ text: '', tabId: tab.id })
+				try {
+					await browserAction.setBadgeBackgroundColor({
+						color: null,
+						tabId: tab.id,
+					})
+				} catch (err) {
+					await browserAction.setBadgeBackgroundColor({
+						color: '',
+						tabId: tab.id,
+					})
+				}
+			}
+			await browserAction.enable(tab.id)
+			mutex.unlock(key)
+		}
+		mutex.unlock('worker')
+	}
 }
 
 function DebugDraw(ctx, info) {
