@@ -313,7 +313,7 @@ function addStylesToElement(elemID) {
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toDataURL
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob
 async function DrawWindow(req) {
-  const canvas = document.createElement('canvas');
+  const canvas = new OffscreenCanvas(0, 0)
   const ctx = canvas.getContext('2d', {alpha: false});
   let {format, quality, rect: {x, y, width, height}, blurRadius} = req;
   
@@ -327,7 +327,9 @@ async function DrawWindow(req) {
   canvas.width = Math.trunc(width);
   canvas.height = Math.trunc(height);
   ctx.imageSmoothingEnabled = false; // The final will be blurried, save time
-  ctx.filter = `blur(${blurRadius}px)`;
+  //* Replaced with stackblur
+  //* ctx.filter = `blur(${blurRadius}px)`;
+  StackBlur.canvasRGB(canvas, 0, 0, canvas.width, canvas.height, blurRadius)
   ctx.drawWindow(window, x - blurRadius, y - blurRadius, width - blurRadius, height - blurRadius, 'rgba(255,0,255,1)');
   return canvas.toDataURL(format, quality);
   //! Security Error: Content at moz-extension://<uuid>/background.html may not

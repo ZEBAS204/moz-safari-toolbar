@@ -226,7 +226,7 @@ async function TakeScreenshot(req, tab) {
 			canvas = CANVAS_ELEMENT
 		} else {
 			console.log('Creating new drawing canvas')
-			canvas = document.createElement('canvas')
+			canvas = new OffscreenCanvas(0, 0)
 			canvas.id = 'firefox-canvas-screenshot' // TODO: add random id
 			CANVAS_ELEMENT = canvas
 		}
