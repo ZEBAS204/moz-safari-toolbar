@@ -2,7 +2,8 @@
 // Testing:
 ChromeUtils.importESModule('resource://gre/modules/XPCOMUtils.sys.mjs')
 
-const lazy = {}
+//*already present
+//const lazy = {}
 
 ChromeUtils.defineESModuleGetters(lazy, {
 	BrowserUtils: 'resource://gre/modules/BrowserUtils.sys.mjs',
@@ -10,8 +11,10 @@ ChromeUtils.defineESModuleGetters(lazy, {
 })
 
 // Constants
+//* Canvas dimensions handling example: https://searchfox.org/mozilla-central/source/remote/shared/Capture.sys.mjs
+const MAX_CANVAS_DIMENSION = 32767
+const MAX_CANVAS_AREA = 472907776
 window.DEBUG_DYNAMIC_TABS = true
-const TOOLBOX_ELEMENT = document.getElementById('navigator-toolbox')
 
 const IS_PRIVATE_WINDOW = lazy.PrivateBrowsingUtils.isWindowPrivate(
 	browser.ownerGlobal
@@ -25,29 +28,6 @@ const BLUR_TYPES = {
 const DEFAULT_BLUR_AMOUNT = 60
 const DEFAULT_BLUR_TYPE = BLUR_TYPES.ACRYLIC
 
-/**
- * Preferences
- * Defines a getter on a specified object for preference value. The
- * preference is read the first time that the property is accessed,
- * and is thereafter kept up-to-date using a preference observer.
- *
- * @param aObject
- *        The object to define the lazy getter on.
- * @param aName
- *        The name of the getter property to define on aObject.
- * @param aPreference
- *        The name of the preference to read.
- * @param aDefaultPrefValue
- *        The default value to use, if the preference is not defined.
- *        This is the default value of the pref, before applying aTransform.
- * @param aOnUpdate
- *        A function to call upon update. Receives as arguments
- *         `(aPreference, previousValue, newValue)`
- * @param aTransform
- *        An optional function to transform the value.  If provided,
- *        this function receives the new preference value as an argument
- *        and its return value is used by the getter.
- */
 const DYNAMIC_TAB_BAR_ENABLED_PREF = 'dynamic.browser.component.enabled'
 XPCOMUtils.defineLazyPreferenceGetter(
 	lazy,
@@ -62,8 +42,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
 		}
 
 		console.log('Dynamic Tab Bar disabled!')
-		// TODO
-		// cleanup()
+		// TODO: cleanup()
 	}
 )
 
@@ -101,11 +80,11 @@ XPCOMUtils.defineLazyPreferenceGetter(
 // idk why but we need to tell lazy to actually work
 console.log(
 	lazy['DYNAMIC_TAB_BAR_BLUR_AMOUNT'],
-	lazy['DYNAMIC_TAB_BAR_BLUR_AMOUNT'],
-	lazy['DYNAMIC_TAB_BAR_ENABLED']
+	lazy['DYNAMIC_TAB_BAR_ENABLED'],
+	lazy['DYNAMIC_TAB_BAR_STYLE']
 )
 
-function addStyles(aCss) {
+function addStyles(aCss, add) {
 	const id = 'dynamictabbar-styles'
 	let styleElement = document.getElementById(id)
 	if (!styleElement) {
@@ -114,27 +93,88 @@ function addStyles(aCss) {
 		styleElement.id = id
 		this.document.head.appendChild(styleElement)
 	}
-	styleElement.textContent = aCss
+	if (add) styleElement.textContent += aCss
+	else styleElement.textContent = aCss
 }
-addStyles(`
+;(() => {
+	const id = window.gNavToolbox.id || '#navigator-toolbox'
+	const shouldHideSecurityBorder = false // TODO: add option
+
+	addStyles(`
 #snapshotCanvas {
 	position: fixed;
   top: 0;
   left: 0;
   pointer-events: none;
   width: 100vw;
+	will-change: transform;
+	transition: transform 0.1s;
+	z-index: -1;
 }
 
 /* Remove background and borders of the middle navigation bar */
-#navigator-toolboxm, #navigator-toolbox #nav-bar, #navigator-toolbox #PersonalToolbar {
+#${id} #nav-bar, #${id} #PersonalToolbar {
 	background: none !important;
 	border: none !important;
 }
+
+#${id} {
+	background: none !important;
+	${shouldHideSecurityBorder ? 'border: none !important;' : ''}
+}
 `)
+})()
 
-// TODO: This should only be applied on first load and saved in memory
+let getDimensions_cache = null
+/**
+ * Caches the result of the different elements dimensions in memory to avoid triggering uninterruptible layout reflows
+ * @param {boolean} [reflow=false] - Whether to force reflow to recalculate dimensions.
+ * @returns {{
+ *   ContentRect: DOMRect,
+ *   BrowserWidth: number,
+ *   BrowserHeight: number,
+ *   TBrect: DOMRect,
+ *   TBwidth: number,
+ *   TBheight: number
+ * }}
+ * Object containing dimensions:
+ * - `ContentRect`: DOMRect representing the content area dimensions.
+ * - `BrowserWidth`: Width of the browser window.
+ * - `BrowserHeight`: Height of the browser window.
+ * - `TBrect`: DOMRect representing the toolbox area dimensions.
+ * - `TBwidth`: Width of the toolbox element.
+ * - `TBheight`: Height of the toolbox element.
+ */
+function getDimensions(reflow = false) {
+	if (!reflow && getDimensions_cache) return getDimensions_cache
 
-function fullExpandPixelRow(canvas) {
+	const { height: BrowserHeight, width: BrowserWidth } =
+		window.windowUtils.getBoundsWithoutFlushing(document.body)
+
+	const { width: TBwidth, height: TBheight } =
+		window.windowUtils.getBoundsWithoutFlushing(window.gNavToolbox)
+
+	const TBrect = new DOMRect(0, TBheight, TBwidth, BrowserHeight - TBheight)
+	//* const ContentRect = new DOMRect(0, TBheight, BrowserWidth, BrowserHeight - TBheight)
+
+	getDimensions_cache = {
+		//* ContentRect,
+		BrowserWidth,
+		BrowserHeight,
+		TBrect,
+		TBwidth,
+		TBheight,
+	}
+	return getDimensions_cache
+}
+getDimensions()
+
+// FIXME: MIGRATE to webassembly, jankiness is produced by this calculation
+// TODO: avoid using the image data from canvas, use the raw bitmap directly
+// TODO: use the first bitmap as reference instead of re-getting the image data from the canvas, TBheight defines the amount of loops to perform
+function fullExpandPixelRow(canvas, bitmap) {
+	const { TBwidth, TBheight } = getDimensions()
+
 	const ctx = canvas.getContext('2d')
 	const START_HEIGHT = 0
 	const PIXEL_ROWS_TO_USE = 4
@@ -147,7 +187,7 @@ function fullExpandPixelRow(canvas) {
 	)
 	const { data: firstRowData } = firstRow
 
-	const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+	const imageData = ctx.getImageData(0, 0, TBwidth, TBheight)
 	const data = imageData.data
 
 	// imageData.data is a Uint8ClampedArray containing RGBA values
@@ -161,27 +201,21 @@ function fullExpandPixelRow(canvas) {
 		// We can ignore alpha
 	}
 
-	//? DEBUG
+	//! DEBUG
 	//ctx.putImageData(firstRow, 0, 380)
 
 	// Draw
 	ctx.putImageData(imageData, 0, 0)
 }
 
+let CANVAS = document.getElementById('snapshotCanvas')
 async function dynamicScreenshot() {
-	// const browserWinDimensions = document.body.getBoundingClientRect()
-	const { width, height } = TOOLBOX_ELEMENT.getBoundingClientRect()
-	const rect = new DOMRect(
-		0,
-		height,
-		width,
-		document.body.getBoundingClientRect().height - height
-	)
+	const { TBrect, TBwidth, TBheight } = getDimensions()
 
-	let debugCanvas = document.querySelector('#snapshotCanvas_DEBUG')
-	let canvas = document.querySelector('#snapshotCanvas')
+	let debugCanvas = document.getElementById('snapshotCanvas_DEBUG')
+	CANVAS = document.getElementById('snapshotCanvas')
 
-	if (!canvas) {
+	if (!CANVAS) {
 		if (window.DEBUG_DYNAMIC_TABS) {
 			debugCanvas = document.createElement('canvas')
 			debugCanvas.id = 'snapshotCanvas_DEBUG'
@@ -193,51 +227,227 @@ async function dynamicScreenshot() {
 			debugCanvas.style.pointerEvents = 'none'
 			document.body.appendChild(debugCanvas)
 			debugCanvas.style.width = 'calc(100vw/4)'
-			debugCanvas.style.height = rect.height / 4
-			debugCanvas.width = width / 4
-			debugCanvas.height = height / 4
+			debugCanvas.style.height = TBrect.height / 4
+			debugCanvas.width = TBwidth / 4
+			debugCanvas.height = TBheight / 4
 		}
-		canvas = document.createElement('canvas')
-		canvas.id = 'snapshotCanvas'
-		canvas.imageSmoothingEnabled = false
-		canvas.mozOpaque = true
+		CANVAS = document.createElement('canvas')
+		CANVAS.id = 'snapshotCanvas'
+		CANVAS.imageSmoothingEnabled = false
+		CANVAS.mozOpaque = true
+
+		// Apply blur
+		CANVAS.style.filter = `blur(${lazy['DYNAMIC_TAB_BAR_BLUR_AMOUNT']}px)`
 
 		// Append the canvas to the body or a specific container
-		TOOLBOX_ELEMENT.prepend(canvas)
+		//window.gNavToolbox.prepend(CANVAS)
+		window.gNavToolbox.parentNode.insertBefore(CANVAS, window.gNavToolbox)
 	}
 
 	// update dimensions
-	canvas.style.height = rect.height
-	canvas.width = width
-	canvas.height = height
+	CANVAS.style.height = TBrect.height
+	CANVAS.width = TBwidth
+	CANVAS.height = TBrect.height
 
-	// Get the canvas context and draw the snapshot with a blur filter
-	const ctx = canvas.getContext('2d')
-
-	const context = await this.browsingContext.currentWindowContext
-	if (context.fullscreen) {
+	if (window.fullScreen) {
+		// FIXME: fails, find another way to check for fullscreen
 		console.log('fullscreen detected, ignoring screenshot')
 		return
 	}
 
+	// Since requestAnimationFrame callback is generally triggered
+	// before any style flush and layout, we should wait for the
+	// second animation frame.
+	requestAnimationFrame(() => {
+		Services.tm.dispatchToMainThread(async () => {
+			// Apply pattern if requested
+			firstLoadScreenshot()
+
+			// Get the canvas context and draw the snapshot with a blur filter
+			const ctx = CANVAS.getContext('2d')
+			const scale = window.devicePixelRatio
+			const context = await this.browsingContext.currentWindowContext // or window.gBrowser.selectedTab.linkedBrowser.browsingContext.currentWindowContext
+			const imgBitmap = await context.drawSnapshot(
+				TBrect, // DOMRect
+				scale, // Scale
+				'rgb(255, 255, 255)' // Background (required)
+			)
+
+			ctx.drawImage(imgBitmap, 0, TBheight) // start draw under the toolbar image
+			if (window.DEBUG_DYNAMIC_TABS) {
+				debugCanvas.getContext('2d').drawImage(imgBitmap, 0, 0)
+			}
+			imgBitmap.close()
+			console.log('done')
+
+			// Apply blur
+			// TODO: replace with assembly and CSS
+		})
+	})
+}
+
+async function firstLoadScreenshot() {
+	const { TBrect } = getDimensions()
+	const context = await this.browsingContext.currentWindowContext
+	const scale = window.devicePixelRatio
 	const imgBitmap = await context.drawSnapshot(
-		rect, // DOMRect
-		1, // Scale
+		TBrect, // DOMRect
+		scale, // Scale
 		'rgb(255, 255, 255)' // Background (required)
 	)
 
+	const ctx = CANVAS.getContext('2d')
 	ctx.drawImage(imgBitmap, 0, 0)
-	if (window.DEBUG_DYNAMIC_TABS) {
-		debugCanvas.getContext('2d').drawImage(imgBitmap, 0, 0)
-	}
 
 	imgBitmap.close()
-	console.log('done')
+	console.log('done: first load screenshot')
 
 	// Apply pattern if requested
 	// Note: when using this pattern method, BLUR FILTER MUST BE DISABLED
-	fullExpandPixelRow(canvas)
-
-	// Apply blur
-	// TODO: replace with assembly and CSS
+	// TODO: use Element.animate (https://hacks.mozilla.org/2016/08/animating-like-you-just-dont-care-with-element-animate)
+	CANVAS.style.transform = 'translateY(0px)'
+	fullExpandPixelRow(CANVAS)
 }
+
+// TODO: investigate
+// https://firefox-source-docs.mozilla.org/dom/ipc/jsactors.html#where-to-store-state
+//* Each individual frame needs state, consider using a WeakMap in the parent process, mapping CanonicalBrowsingContext’s
+//* with that state.That way, if the associates frames ever go away, you don’t have to do any cleaning up yourself.
+const eventsAdded = []
+// .
+function setupDynamicListeners(remove) {
+	if (remove) {
+		eventsAdded.forEach((event) => {
+			gBrowser.tabContainer.removeEventListener('TabSelect', event)
+			eventsAdded.shift()
+		})
+		return
+	}
+
+	const toolboxEvent = document
+		.getElementById('toolbar-menubar')
+		.addEventListener(
+			'toolbarvisibilitychange', // To check the whole toolbar, use toolbarvisibilitychange
+			(event) => {
+				// Since the bookmarks toolbar doesn't affect the canvas, we only need to listen to the Menu Bar activation
+				console.log('aaaa', event)
+				// Force dimensions reflow
+				getDimensions(true)
+				dynamicScreenshot()
+			}
+		)
+
+	const closetEvent = gBrowser.tabContainer.addEventListener(
+		'TabClose',
+		(event) => {
+			// console.log('Tab closed!', event)
+			// TODO: handle stuff removal
+		}
+	)
+
+	const selectEvent = gBrowser.tabContainer.addEventListener(
+		'TabSelect',
+		(event) => {
+			// console.log('New tab selected', event)
+			// FIXME: should wait until the first content paint
+			dynamicScreenshot()
+		}
+	)
+
+	eventsAdded.push(closetEvent)
+	eventsAdded.push(selectEvent)
+	eventsAdded.push(toolboxEvent)
+}
+setupDynamicListeners(true)
+setupDynamicListeners()
+
+/*
+ * TESTING FUNCTIONS
+ */
+//! TEST FUNCTIONS
+function TEST_createScrollSlider() {
+	// Create slider container and slider elements
+	let sliderContainer = document.getElementById('dynamic-sliderContainer')
+	let slider = document.getElementById('dynamic-sliderContainer-input')
+	let sliderValue = document.getElementById('dynamic-sliderContainer-value')
+	let takeScreenshotButton = document.getElementById(
+		'dynamic-sliderContainer-screenshotBTN'
+	)
+	if (!sliderContainer) {
+		sliderContainer = document.createElement('div')
+		sliderContainer.id = 'dynamic-sliderContainer'
+		sliderContainer.style.width = '100%' // Adjust width as needed
+		sliderContainer.style.maxWidth = '10vw' // Max width for better responsiveness
+		sliderContainer.style.textAlign = 'center'
+		sliderContainer.style.left = '5px'
+		sliderContainer.style.bottom = '5px'
+		sliderContainer.style.position = 'fixed'
+
+		slider = document.createElement('input')
+		slider.id = 'dynamic-sliderContainer-input'
+		slider.type = 'range'
+		slider.min = 0
+		slider.step = 1
+
+		takeScreenshotButton = document.createElement('button')
+		takeScreenshotButton.textContent = 'Take screenshot'
+		takeScreenshotButton.id = 'dynamic-sliderContainer-screenshotBTN'
+		takeScreenshotButton.addEventListener('click', () => {
+			dynamicScreenshot()
+		})
+
+		// Get the height of the document body and set as max value for the slider
+		const bodyHeight = document.body.getBoundingClientRect().height
+		slider.max = bodyHeight
+
+		// Display current value of the slider
+		sliderValue = document.createElement('div')
+		sliderValue.id = 'dynamic-sliderContainer-value'
+		sliderValue.textContent = '0'
+
+		const blurSlider = document.createElement('input')
+		blurSlider.type = 'range'
+		blurSlider.min = 0
+
+		// Append slider and value elements to the container
+		sliderContainer.appendChild(blurSlider)
+		sliderContainer.appendChild(slider)
+		sliderContainer.appendChild(sliderValue)
+		sliderContainer.appendChild(takeScreenshotButton)
+
+		// Append container to the document body
+		document.body.appendChild(sliderContainer)
+
+		// Add blur slider
+		blurSlider.addEventListener('input', () => {
+			CANVAS.style.filter = `blur(${blurSlider.value}px)`
+		})
+	}
+
+	// Return an object with references to slider and listeners
+	return {
+		slider,
+		sliderValue,
+	}
+}
+
+function TEST_setupScrollEvents() {
+	// Call the function to create the slider
+	if (document.getElementById('dynamic-sliderContainer')) {
+		document.getElementById('dynamic-sliderContainer').remove()
+	}
+	const { slider, sliderValue } = TEST_createScrollSlider()
+
+	const changeListener = () => {
+		if (CANVAS) {
+			const value = slider.value
+			sliderValue.textContent = value
+			CANVAS.style.transform = `translateY(-${value}px)`
+			//console.log('Slider value changed to:', value)
+		}
+	}
+
+	// Re-add them
+	slider.addEventListener('input', changeListener)
+}
+TEST_setupScrollEvents()
