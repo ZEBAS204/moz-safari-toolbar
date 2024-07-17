@@ -108,7 +108,7 @@ function addStyles(aCss, add) {
   pointer-events: none;
   width: 100vw;
 	will-change: transform;
-	transition: transform 0.1s;
+	/*transition: transform 0.1s;*/
 	z-index: -1;
 }
 
@@ -309,35 +309,96 @@ async function firstLoadScreenshot() {
 	fullExpandPixelRow(CANVAS)
 }
 
-// TODO: investigate
-// https://firefox-source-docs.mozilla.org/dom/ipc/jsactors.html#where-to-store-state
-//* Each individual frame needs state, consider using a WeakMap in the parent process, mapping CanonicalBrowsingContext’s
-//* with that state.That way, if the associates frames ever go away, you don’t have to do any cleaning up yourself.
-const eventsAdded = []
-// .
-function setupDynamicListeners(remove) {
-	if (remove) {
-		eventsAdded.forEach((event) => {
-			gBrowser.tabContainer.removeEventListener('TabSelect', event)
-			eventsAdded.shift()
-		})
-		return
+/**
+ * Track and store event listeners
+ */
+class EventTracker {
+	constructor() {
+		if (EventTracker._instance) {
+			// Prevent additional instances from being created
+			return EventTracker._instance
+		}
+
+		// Initialize the event registry
+		this.eventRegistry = {}
+		EventTracker._instance = this
 	}
 
-	const toolboxEvent = document
-		.getElementById('toolbar-menubar')
-		.addEventListener(
-			'toolbarvisibilitychange', // To check the whole toolbar, use toolbarvisibilitychange
-			(event) => {
-				// Since the bookmarks toolbar doesn't affect the canvas, we only need to listen to the Menu Bar activation
-				console.log('aaaa', event)
-				// Force dimensions reflow
-				getDimensions(true)
-				dynamicScreenshot()
-			}
-		)
+	// Static getter to access the singleton instance
+	static get instance() {
+		if (!EventTracker._instance) {
+			new EventTracker()
+		}
+		return EventTracker._instance
+	}
 
-	const closetEvent = gBrowser.tabContainer.addEventListener(
+	// Add an event listener and track it
+	static addTrackedEventListener(element, eventType, listener) {
+		if (!element) return
+
+		const tracker = EventTracker.instance // Access singleton instance
+
+		// Generate a unique key for the element and event type
+		const key = tracker._getElementKey(element) + `-${eventType}`
+
+		// Initialize registry for the element and event type if not already present
+		if (!tracker.eventRegistry[key]) {
+			tracker.eventRegistry[key] = []
+		}
+
+		// Add the event listener
+		element.addEventListener(eventType, listener)
+
+		// Store the listener in the registry
+		tracker.eventRegistry[key].push({
+			element,
+			eventType,
+			listener,
+		})
+	}
+
+	// Remove all tracked event listeners
+	static removeAllTrackedEventListeners() {
+		const tracker = EventTracker.instance // Access singleton instance
+
+		Object.keys(tracker.eventRegistry).forEach((key) => {
+			const listeners = tracker.eventRegistry[key]
+			if (listeners) {
+				listeners.forEach(({ element, eventType, listener }) => {
+					if (element) {
+						element.removeEventListener(eventType, listener)
+					}
+				})
+			}
+		})
+
+		// Clear the registry
+		tracker.eventRegistry = {}
+	}
+
+	// Generate a unique key for an element based on its ID or class
+	_getElementKey(element) {
+		return `${element.tagName}-${element.id || element.className}`
+	}
+}
+
+function setupDynamicListeners() {
+	EventTracker.removeAllTrackedEventListeners()
+
+	EventTracker.addTrackedEventListener(
+		window.gNavToolbox,
+		'toolbarvisibilitychange', // To check the whole toolbar, use toolbarvisibilitychange
+		(event) => {
+			// Since the bookmarks toolbar doesn't affect the canvas, we only need to listen to the Menu Bar activation
+			console.log('toolbarvisibilitychange', event)
+			// Force dimensions reflow
+			getDimensions(true)
+			dynamicScreenshot()
+		}
+	)
+
+	EventTracker.addTrackedEventListener(
+		gBrowser.tabContainer,
 		'TabClose',
 		(event) => {
 			// console.log('Tab closed!', event)
@@ -345,26 +406,78 @@ function setupDynamicListeners(remove) {
 		}
 	)
 
-	const selectEvent = gBrowser.tabContainer.addEventListener(
+	/*
+		window.gBrowser.tabpanels.addEventListener('select', (event) => {
+			if (event.target == this.tabpanels) {
+				// Update selected browser
+				//this.updateCurrentBrowser()
+				gBrowser.selectedBrowser //* ---> <browser>
+			}
+		})
+	*/
+	// TODO: read this
+	//! https://searchfox.org/mozilla-central/source/browser/components/tabbrowser/content/tabbrowser.js
+
+	EventTracker.addTrackedEventListener(
+		gBrowser.tabContainer,
 		'TabSelect',
 		(event) => {
-			// console.log('New tab selected', event)
+			console.log('New tab selected', event)
 			// FIXME: should wait until the first content paint
 			dynamicScreenshot()
+
+			//! NOT WORKING
+			window.gBrowser.selectedBrowser.browsingContext.topFrameElement.addEventListener(
+				'MozAfterPaint',
+				() => {
+					console.log('loaded!')
+				},
+				{
+					once: true,
+				}
+			)
 		}
 	)
 
-	eventsAdded.push(closetEvent)
-	eventsAdded.push(selectEvent)
-	eventsAdded.push(toolboxEvent)
+	EventTracker.addTrackedEventListener(
+		gBrowser.tabContainer,
+		'oop-browser-crashed',
+		(event) => {
+			if (event.isTopFrame) {
+				console.log('Tab crashed, discarting buffers!', event)
+			}
+		}
+	)
 }
-setupDynamicListeners(true)
 setupDynamicListeners()
 
+/**
+ * Listen to location changes, when you change the url
+ */
+const tabProgressListener = {
+	onLocationChange(aBrowser) {
+		if (window.gBrowser.selectedBrowser == aBrowser) {
+			console.log('onLocationChange', aBrowser, this)
+
+			// FIXME: executed multiple times, check if there's a property after DOMCONTENTLOADED
+			dynamicScreenshot()
+
+			//window.gBrowser.removeTabsProgressListener(tabProgressListener) //unregister at first call
+		} else {
+			console.log('Ignoring event of browser', aBrowser)
+		}
+	},
+}
+window.gBrowser.addTabsProgressListener(tabProgressListener)
+
 /*
+ *
+ *
+ *
+ *
+ *
  * TESTING FUNCTIONS
  */
-//! TEST FUNCTIONS
 function TEST_createScrollSlider() {
 	// Create slider container and slider elements
 	let sliderContainer = document.getElementById('dynamic-sliderContainer')
