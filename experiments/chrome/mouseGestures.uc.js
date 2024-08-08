@@ -23,7 +23,13 @@ const CONTEXT_SETTINGS = {
 	// Depends on pref gfx.canvas.willreadfrequently.enabled
 	willReadFrequently: false,
 }
-window.DEBUG_DYNAMIC_TABS = true
+
+const BLUR_TYPES = {
+	ACRYLIC: 'acrylic', // 60px
+	MICA: 'mica', // 40px
+	MICA_ALT: 'mica_alt', // 80px
+	TRANSPARENT: 'transparent', // 5px
+}
 
 const { XPCOMUtils } = ChromeUtils.import(
 	'resource://gre/modules/XPCOMUtils.jsm'
@@ -149,86 +155,15 @@ console.log('AAAAAAAAAAAAAAAAAAAAAAAA', this, window, lazy)
 const IS_PRIVATE_WINDOW = lazy.PrivateBrowsingUtils.isWindowPrivate(
 	window.gBrowser.ownerGlobal
 )
-const BLUR_TYPES = {
-	ACRYLIC: 'acrylic', // 60px
-	MICA: 'mica', // 40px
-	MICA_ALT: 'mica_alt', // 80px
-	TRANSPARENT: 'transparent', // 5px
-}
-
-const DEFAULT_TAB_BAR_ENABLED = true
-const DYNAMIC_TAB_BAR_ENABLED_PREF = 'dynamic.browser.component.enabled'
-XPCOMUtils.defineLazyPreferenceGetter(
-	this,
-	'DYNAMIC_TAB_BAR_ENABLED',
-	DYNAMIC_TAB_BAR_ENABLED_PREF,
-	DEFAULT_TAB_BAR_ENABLED,
-	function onToggle(_pref, _prevVal, newVal) {
-		if (newVal) {
-			console.log('Dynamic Tab Bar enabled!')
-			// TODO
-			return
-		}
-
-		console.log('Dynamic Tab Bar disabled!')
-		// TODO: cleanup()
-	}
-)
-
-const DEFAULT_SECURITY_BORDER = true
-const DYNAMIC_TAB_BAR_SECURITY_BORDER_PREF =
-	'dynamic.browser.component.security_border'
-XPCOMUtils.defineLazyPreferenceGetter(
-	this,
-	'DYNAMIC_TAB_BAR_SECURITY_BORDER',
-	DYNAMIC_TAB_BAR_SECURITY_BORDER_PREF,
-	DEFAULT_SECURITY_BORDER,
-	function onSecurityBorderUpdate(_pref, _prevVal, newVal) {
-		console.log('Updated Security border', newVal, this)
-		// TODO
-	}
-)
-
-const DEFAULT_BLUR_TYPE = BLUR_TYPES.ACRYLIC
-const DYNAMIC_TAB_BAR_STYLE_PREF = 'dynamic.browser.component.blur_style'
-XPCOMUtils.defineLazyPreferenceGetter(
-	this,
-	'DYNAMIC_TAB_BAR_STYLE',
-	DYNAMIC_TAB_BAR_STYLE_PREF,
-	DEFAULT_BLUR_TYPE,
-	function onBlurTypeUpdate(_pref, _prevVal, newVal) {
-		console.log('Updated Blur Type', newVal)
-		// TODO
-	}
-)
-
-const DEFAULT_BLUR_AMOUNT = 60
-const DYNAMIC_TAB_BAR_BLUR_AMOUNT_PREF = 'dynamic.browser.component.blur_amount'
-XPCOMUtils.defineLazyPreferenceGetter(
-	this,
-	'DYNAMIC_TAB_BAR_BLUR_AMOUNT',
-	DYNAMIC_TAB_BAR_BLUR_AMOUNT_PREF,
-	DEFAULT_BLUR_AMOUNT,
-	function onBlurAmountUpdate(_pref, _prevVal, newVal) {
-		// TODO validate new val
-		// TODO cannot be negative
-		const canvas = window.document.getElementById('snapshotCanvas')
-		if (canvas) {
-			console.log('Updated Blur Amount', newVal)
-			canvas.style.filter = `blur(${newVal}px)`
-		} else {
-			console.error('Updated Blur Amount failed due to canvas element missing!')
-		}
-	}
-)
 
 // idk why but we need to tell lazy to actually work
-console.log(
-	this.DYNAMIC_TAB_BAR_BLUR_AMOUNT,
-	this.DYNAMIC_TAB_BAR_ENABLED,
-	this.DYNAMIC_TAB_BAR_STYLE,
-	this.DYNAMIC_TAB_BAR_SECURITY_BORDER
-)
+/*
+! console.log(
+! 	this.DYNAMIC_TAB_BAR_BLUR_AMOUNT,
+! 	this.DYNAMIC_TAB_BAR_ENABLED,
+! 	this.DYNAMIC_TAB_BAR_STYLE,
+! 	this.DYNAMIC_TAB_BAR_SECURITY_BORDER
+)*/
 
 //* Sidebar compatibility
 // TODO: use this to check if sidebar is enabled and change dimensions accordingly
@@ -237,10 +172,15 @@ const IS_SIDEBAR_ENABLED = Services.prefs.getBoolPref(SIDEBAR_ENABLED_PREF)
 
 // TODO: make this object an actual class
 UC.MGest = {
+	// debug tracking to know how this context works
 	_isNewInstance: true,
+	DEBUG_DYNAMIC_TABS: true,
+
 	_buffers: new WeakMap(),
-	_currentTab: window.gBrowser.selectedTab,
 	getDimensions_cache: null,
+	_currentTab: window.gBrowser.selectedTab,
+	CANVAS: window.document.getElementById('snapshotCanvas'),
+	DEBUG_CANVAS: window.document.getElementById('snapshotCanvas_DEBUG'),
 
 	/**
 	 * Caches the result of the different elements dimensions in memory to avoid triggering uninterruptible layout reflows
@@ -265,13 +205,15 @@ UC.MGest = {
 		if (!reflow && this.getDimensions_cache) return this.getDimensions_cache
 
 		const { height: BrowserHeight, width: BrowserWidth } =
-			window.windowUtils.getBoundsWithoutFlushing(window.document.body)
+			window.document.body.getBoundingClientRect()
+		// window.windowUtils.getBoundsWithoutFlushing(window.document.body)
 
 		const { width: TBwidth, height: TBheight } =
-			window.windowUtils.getBoundsWithoutFlushing(window.gNavToolbox)
+			window.gNavToolbox.getBoundingClientRect()
+		// window.windowUtils.getBoundsWithoutFlushing(window.gNavToolbox)
 
 		const TBrect = new DOMRect(0, TBheight, TBwidth, BrowserHeight - TBheight)
-		const BrowserRect = new DOMRect( // browser sidebar + browser (if we want to make transparent also the side bar)
+		const BrowserRect = new DOMRect( // browser sidebar + browser (if we want to make transparent also the side barddedede)
 			0,
 			TBheight,
 			BrowserWidth,
@@ -342,7 +284,6 @@ UC.MGest = {
 		ctx.putImageData(imageData, 0, 0)
 	},
 
-	CANVAS: window.document.getElementById('snapshotCanvas'),
 	dynamicScreenshot: async function (force = false) {
 		window.console.time('dynamicScreenshot')
 		console.log(`dynamicScreenshot(${force ? 'true' : 'false'})`)
@@ -395,10 +336,12 @@ UC.MGest = {
 			// https://searchfox.org/mozilla-central/source/browser/components/screenshots/ScreenshotsUtils.sys.mjs#1041
 
 			ctx.drawImage(imgBitmap, 0, TBheight) // start draw under the toolbar image
-			if (window.DEBUG_DYNAMIC_TABS) {
-				this.debugCanvas
-					.getContext('2d', { alpha: false })
-					.drawImage(imgBitmap, 0, 0)
+			if (this.DEBUG_DYNAMIC_TABS) {
+				this.DEBUG_CANVAS.getContext('2d', { alpha: false }).drawImage(
+					imgBitmap,
+					0,
+					0
+				)
 			}
 
 			imgBitmap.close()
@@ -697,30 +640,30 @@ UC.MGest = {
 		const debugCanvasID = 'snapshotCanvas_DEBUG'
 		const canvasID = 'snapshotCanvas'
 
-		this.debugCanvas = window.document.getElementById(debugCanvasID)
+		this.DEBUG_CANVAS = window.document.getElementById(debugCanvasID)
 		this.CANVAS = window.document.getElementById(canvasID)
 
 		if (remove) {
 			this.CANVAS?.remove()
-			this.debugCanvas?.remove()
+			this.DEBUG_CANVAS?.remove()
 		}
 		if (this.CANVAS) return
 
 		const { TBrect, TBwidth, TBheight } = this.getDimensions()
-		if (window.DEBUG_DYNAMIC_TABS && !this.debugCanvas) {
-			this.debugCanvas = window.document.createElement('canvas')
-			this.debugCanvas.id = debugCanvasID
-			this.debugCanvas.imageSmoothingEnabled = false
-			this.debugCanvas.mozOpaque = true
-			this.debugCanvas.style.position = 'fixed'
-			this.debugCanvas.style.bottom = '0'
-			this.debugCanvas.style.right = '0'
-			this.debugCanvas.style.pointerEvents = 'none'
-			this.debugCanvas.style.width = 'calc(100vw/4)'
-			this.debugCanvas.style.height = TBrect.height / 4
-			this.debugCanvas.width = TBwidth / 4
-			this.debugCanvas.height = TBheight / 4
-			window.document.body.appendChild(this.debugCanvas)
+		if (this.DEBUG_DYNAMIC_TABS && !this.DEBUG_CANVAS) {
+			this.DEBUG_CANVAS = window.document.createElement('canvas')
+			this.DEBUG_CANVAS.id = debugCanvasID
+			this.DEBUG_CANVAS.imageSmoothingEnabled = false
+			this.DEBUG_CANVAS.mozOpaque = true
+			this.DEBUG_CANVAS.style.position = 'fixed'
+			this.DEBUG_CANVAS.style.bottom = '0'
+			this.DEBUG_CANVAS.style.right = '0'
+			this.DEBUG_CANVAS.style.pointerEvents = 'none'
+			this.DEBUG_CANVAS.style.width = 'calc(100vw/4)'
+			this.DEBUG_CANVAS.style.height = TBrect.height / 4
+			this.DEBUG_CANVAS.width = TBwidth / 4
+			this.DEBUG_CANVAS.height = TBheight / 4
+			window.document.body.appendChild(this.DEBUG_CANVAS)
 		}
 		this.CANVAS = window.gBrowser.selectedBrowser.ownerDocument.createElementNS(
 			'http://www.w3.org/1999/xhtml',
@@ -790,6 +733,74 @@ UC.MGest = {
 	_init: function () {
 		console.log('INIT!')
 
+		const DEFAULT_TAB_BAR_ENABLED = true
+		const DYNAMIC_TAB_BAR_ENABLED_PREF = 'dynamic.browser.component.enabled'
+		XPCOMUtils.defineLazyPreferenceGetter(
+			this,
+			'DYNAMIC_TAB_BAR_ENABLED',
+			DYNAMIC_TAB_BAR_ENABLED_PREF,
+			DEFAULT_TAB_BAR_ENABLED,
+			function onToggle(_pref, _prevVal, newVal) {
+				if (newVal) {
+					console.log('Dynamic Tab Bar enabled!')
+					// TODO
+					return
+				}
+
+				console.log('Dynamic Tab Bar disabled!')
+				// TODO: cleanup()
+			}
+		)
+
+		const DEFAULT_SECURITY_BORDER = true
+		const DYNAMIC_TAB_BAR_SECURITY_BORDER_PREF =
+			'dynamic.browser.component.security_border'
+		XPCOMUtils.defineLazyPreferenceGetter(
+			this,
+			'DYNAMIC_TAB_BAR_SECURITY_BORDER',
+			DYNAMIC_TAB_BAR_SECURITY_BORDER_PREF,
+			DEFAULT_SECURITY_BORDER,
+			function onSecurityBorderUpdate(_pref, _prevVal, newVal) {
+				console.log('Updated Security border', newVal, globalThis)
+			}
+		)
+
+		const DEFAULT_BLUR_TYPE = BLUR_TYPES.ACRYLIC
+		const DYNAMIC_TAB_BAR_STYLE_PREF = 'dynamic.browser.component.blur_style'
+		XPCOMUtils.defineLazyPreferenceGetter(
+			this,
+			'DYNAMIC_TAB_BAR_STYLE',
+			DYNAMIC_TAB_BAR_STYLE_PREF,
+			DEFAULT_BLUR_TYPE,
+			function onBlurTypeUpdate(_pref, _prevVal, newVal) {
+				console.log('Updated Blur Type', newVal)
+				// TODO
+			}
+		)
+
+		const DEFAULT_BLUR_AMOUNT = 60
+		const DYNAMIC_TAB_BAR_BLUR_AMOUNT_PREF =
+			'dynamic.browser.component.blur_amount'
+		XPCOMUtils.defineLazyPreferenceGetter(
+			this,
+			'DYNAMIC_TAB_BAR_BLUR_AMOUNT',
+			DYNAMIC_TAB_BAR_BLUR_AMOUNT_PREF,
+			DEFAULT_BLUR_AMOUNT,
+			function onBlurAmountUpdate(_pref, _prevVal, newVal) {
+				// TODO validate new val
+				// TODO cannot be negative
+				const canvas = window.document.getElementById('snapshotCanvas')
+				if (canvas) {
+					console.log('Updated Blur Amount', newVal)
+					canvas.style.filter = `blur(${newVal}px)`
+				} else {
+					console.error(
+						'Updated Blur Amount failed due to canvas element missing!'
+					)
+				}
+			}
+		)
+
 		this.initializeElements()
 		this.getDimensions()
 		this.setupDynamicListeners()
@@ -798,25 +809,23 @@ UC.MGest = {
 		/**
 		 * Listen to location changes, when you change the url
 		 ** NOTE: For testing purposes this function is defined like this
+		 ** A lot of stuff taken from here: https://searchfox.org/mozilla-central/source/browser/components/shell/HeadlessShell.sys.mjs#57
+		 ** and here: https://searchfox.org/mozilla-central/source/devtools/server/actors/resources/parent-process-document-event.js#98
 		 */
-		this.tabProgressListener.onLocationChange = function (
+		this.tabProgressListener.onLocationChange = async function (
 			aBrowser,
 			webProgress,
 			_request,
-			_uri,
+			_uri, // location
 			flags
 		) {
+			// Ignore event of other browsers tabs
 			if (window.gBrowser.selectedBrowser !== aBrowser) {
-				console.log(
-					'Ignoring event onLocationChange of browser',
-					aBrowser,
-					webProgress,
-					_request,
-					_uri,
-					flags
-				)
+				console.info('Ignoring event onLocationChange of browser', aBrowser)
 				return
 			}
+
+			console.log('onLocationChange!', _uri.spec, arguments)
 
 			// Some websites trigger redirect events after they finish loading even
 			// though the location remains the same. This results in onLocationChange
@@ -824,21 +833,22 @@ UC.MGest = {
 			const isSameDocument = !!(
 				flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT
 			)
-			const isLoadingDocument = webProgress.isLoadingDocument
+			// Ignore the initial about:blank, unless about:blank is requested
+			if (_uri.spec == 'about:blank') {
+				console.log('onLocationChange: Ignoring about:blank', arguments)
+				return
+			}
 
 			if (webProgress.isTopLevel && !isSameDocument) {
-				console.log(
-					'onLocationChange',
-					aBrowser,
-					webProgress,
-					_request,
-					_uri,
-					flags
-				)
-				//if (isLoadingwindow.document) await new webProgress.addProgressListener()
-				// FIXME: executed multiple times, check if there's a property after DOMCONTENTLOADED
+				console.log('onLocationChange top level')
+				const isLoadingDocument = webProgress.isLoadingDocument
+				if (isLoadingDocument) {
+					console.log('Waiting for document to stop loading, before screenshot')
+				}
+
 				this.dynamicScreenshot(true)
 				//window.gBrowser.removeTabsProgressListener(tabProgressListener) //unregister at first call
+				return
 			}
 			if (_uri.hasRef) {
 				// If the target URL contains a hash, handle the navigation without redrawing the buffer
@@ -848,8 +858,11 @@ UC.MGest = {
 			}
 
 			// when changing page without reloading the page, eg NextJS
-			console.log('onLocationChange not top level')
-			this.dynamicScreenshot(true)
+			// We can also get here because of inner-frame events
+			console.log(
+				'onLocationChange not top level, reached end of function.\nShould execute?'
+			)
+			//this.dynamicScreenshot(true)
 		}.bind(this)
 
 		window.gBrowser.addTabsProgressListener(this.tabProgressListener, {
