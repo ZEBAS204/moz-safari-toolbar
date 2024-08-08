@@ -1,3 +1,5 @@
+//! This file was migrated to chrome/mouseGestures.uc.js, it will be removed later
+
 //Final: import { XPCOMUtils } from 'resource://gre/modules/XPCOMUtils.sys.mjs'
 // Testing:
 ChromeUtils.importESModule('resource://gre/modules/XPCOMUtils.sys.mjs')
