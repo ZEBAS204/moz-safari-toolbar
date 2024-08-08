@@ -429,6 +429,25 @@ UC.MGest = {
 	setupDynamicListeners: function () {
 		EventTracker.removeAllTrackedEventListeners()
 
+		// Toolbox Customization glue support
+		/*
+		EventTracker.addTrackedEventListener(
+			window.gNavToolbox,
+			'customizationstarting',
+			window.requestAnimationFrame(function (event) {
+				console.log(
+					'Browser Chrome Customization started, hiding canvas',
+					event
+				)
+				// TODO: cancel canvas paint
+
+				window.gNavToolbox.addEventListener('aftercustomization', (event) => {
+					// restore?
+				}, {once: true})
+			})
+		)
+		*/
+
 		window.gNavToolbox.querySelectorAll('toolbar').forEach((childToolbar) => {
 			EventTracker.addTrackedEventListener(
 				childToolbar,
