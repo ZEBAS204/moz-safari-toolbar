@@ -486,6 +486,26 @@ UC.MGest = {
 	setupDynamicListeners: function () {
 		EventTracker.removeAllTrackedEventListeners()
 
+		window.gNavToolbox.querySelectorAll('toolbar').forEach((childToolbar) => {
+			EventTracker.addTrackedEventListener(
+				childToolbar,
+				'toolbarvisibilitychange',
+				(event) => {
+					console.log('toolbarvisibilitychange', event, {
+						isToolbarVisible: event.detail.visible,
+					})
+					window.addEventListener(
+						'MozAfterPaint',
+						() => {
+							this.getDimensions(true)
+							this.dynamicScreenshot(true)
+						},
+						{ once: true }
+					)
+				}
+			)
+		})
+
 		EventTracker.addTrackedEventListener(
 			window,
 			'EndSwapDocShells',
