@@ -719,7 +719,7 @@ UC.MGest = {
 			else styleElement.textContent = aCss
 		}
 		const tb = window.gNavToolbox.id || '#navigator-toolbox'
-		const shouldHideSecurityBorder = this.DYNAMIC_TAB_BAR_SECURITY_BORDER
+		const showSecurityBorder = this.DYNAMIC_TAB_BAR_SECURITY_BORDER
 
 		addStyles(`
       #snapshotCanvas {
@@ -730,17 +730,18 @@ UC.MGest = {
         width: 100vw;
         will-change: transform;
         z-index: -1;
+				transform-origin: center top 0;
       }
 
       /* Remove background and borders of the middle navigation bar */
-			#${tb} #nav-bar, #${tb} #PersonalToolbar {
+			#${tb} > * {
 				background: none !important;
-				border: none !important;
+				border-color: transparent !important;
 			}
 
 			#${tb} {
 				background: none !important;
-				${shouldHideSecurityBorder ? 'border: none !important;' : ''}
+				${showSecurityBorder ? '' : 'border-color: transparent !important;'}
 			}
       `)
 	},
