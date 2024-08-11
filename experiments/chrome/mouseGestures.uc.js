@@ -8,6 +8,7 @@
 // ==/UserScript==
 // Using https://github.com/xiaoxiaoflood/firefox-scripts
 // Using Mouse Gestures file as template: https://github.com/xiaoxiaoflood/firefox-scripts/blob/master/chrome/mouseGestures.uc.js
+'use strict'
 
 //* CAPTURE CONSTANTS TOOK FROM: https://searchfox.org/mozilla-central/source/browser/components/screenshots/ScreenshotsUtils.sys.mjs
 // The max dimension for a canvas is 32,767 https://searchfox.org/mozilla-central/rev/f40d29a11f2eb4685256b59934e637012ea6fb78/gfx/cairo/cairo/src/cairo-image-surface.c#62.
@@ -25,6 +26,7 @@ const CONTEXT_SETTINGS = {
 }
 
 const BLUR_TYPES = {
+	NONE: 'none',
 	ACRYLIC: 'acrylic', // 60px
 	MICA: 'mica', // 40px
 	MICA_ALT: 'mica_alt', // 80px
@@ -135,10 +137,8 @@ class EventTracker {
 		EventTracker.removeAllTrackedEventListeners()
 	}
 }
-window._DynamicTabsEventTracker = EventTracker
 
 const lazy = {}
-
 ChromeUtils.defineESModuleGetters(lazy, {
 	BrowserUtils: 'resource://gre/modules/BrowserUtils.sys.mjs',
 	PrivateBrowsingUtils: 'resource://gre/modules/PrivateBrowsingUtils.sys.mjs',
@@ -156,17 +156,8 @@ const IS_PRIVATE_WINDOW = lazy.PrivateBrowsingUtils.isWindowPrivate(
 	window.gBrowser.ownerGlobal
 )
 
-// idk why but we need to tell lazy to actually work
-/*
-! console.log(
-! 	this.DYNAMIC_TAB_BAR_BLUR_AMOUNT,
-! 	this.DYNAMIC_TAB_BAR_ENABLED,
-! 	this.DYNAMIC_TAB_BAR_STYLE,
-! 	this.DYNAMIC_TAB_BAR_SECURITY_BORDER
-)*/
-
 //* Sidebar compatibility
-// TODO: use this to check if sidebar is enabled and change dimensions accordingly
+// TODO: do something with sidebar?
 const SIDEBAR_ENABLED_PREF = 'sidebar.revamp'
 const IS_SIDEBAR_ENABLED = Services.prefs.getBoolPref(SIDEBAR_ENABLED_PREF)
 
@@ -176,11 +167,51 @@ UC.MGest = {
 	_isNewInstance: true,
 	DEBUG_DYNAMIC_TABS: true,
 
-	_buffers: new WeakMap(),
+	_tabProcessingQueue: new WeakMap(),
 	getDimensions_cache: null,
+
 	_currentTab: window.gBrowser.selectedTab,
 	CANVAS: window.document.getElementById('snapshotCanvas'),
 	DEBUG_CANVAS: window.document.getElementById('snapshotCanvas_DEBUG'),
+
+	/**
+	 * @typedef {Object} BufferData
+	 * @property {ImageData} [imgData] - The image data associated with the buffer.
+	 * @property {boolean} [isRectCrop] - If the rect dimensions where cropped
+	 * @property {Rect} [rect] - The rectangle defining the area of screenshot.
+	 * @property {number} rect.width - The width of the rectangle.
+	 * @property {number} rect.height - The height of the rectangle.
+	 * @property {number} rect.top - The top position of the rectangle.
+	 * @property {number} rect.left - The left position of the rectangle.
+	 * @property {number} rect.right - The right position of the rectangle.
+	 * @property {number} rect.bottom - The bottom position of the rectangle.
+	 */
+	/**
+	 * Holds information of all tracked tabs
+	 * @type {WeakMap<object, BufferData>}
+	 */
+	_buffers: new WeakMap(),
+
+	/**
+	 * Holds information of all tabs that have been cached by firefox (eg. newtab)
+	 * @type {Map<object, BufferData>}
+	 */
+	_cachedBuffers: new Map(),
+
+	/**
+	 * @param {Element} aTab - The tab element for which the buffer data is being set.
+	 * @param {keyof BufferData} dataName - The name/key of the buffer data to update or add.
+	 * @param {any} data - The new buffer data to set for the given `dataName`.
+	 *
+	 * @returns {void}
+	 */
+	setTabBuffer: function (aTab, dataName, data) {
+		const currentData = this._buffers.get(aTab) || {}
+		this._buffers.set(aTab, {
+			...currentData,
+			[dataName]: data,
+		})
+	},
 
 	/**
 	 * Caches the result of the different elements dimensions in memory to avoid triggering uninterruptible layout reflows
@@ -193,7 +224,6 @@ UC.MGest = {
 	 *   TBwidth: number,
 	 *   TBheight: number
 	 * }}
-	 * Object containing dimensions:
 	 * - `ContentRect`: DOMRect representing the content area dimensions.
 	 * - `BrowserWidth`: Width of the browser window.
 	 * - `BrowserHeight`: Height of the browser window.
@@ -206,19 +236,14 @@ UC.MGest = {
 
 		const { height: BrowserHeight, width: BrowserWidth } =
 			window.document.body.getBoundingClientRect()
-		// window.windowUtils.getBoundsWithoutFlushing(window.document.body)
 
 		const { width: TBwidth, height: TBheight } =
 			window.gNavToolbox.getBoundingClientRect()
-		// window.windowUtils.getBoundsWithoutFlushing(window.gNavToolbox)
+
+		const { x: xContentOffset, y: yContentOffset } =
+			window.gBrowser.selectedBrowser.getBoundingClientRect()
 
 		const TBrect = new DOMRect(0, TBheight, TBwidth, BrowserHeight - TBheight)
-		const BrowserRect = new DOMRect( // browser sidebar + browser (if we want to make transparent also the side barddedede)
-			0,
-			TBheight,
-			BrowserWidth,
-			BrowserHeight - TBheight
-		)
 		const ContentRect = new DOMRect(
 			gBrowser.selectedBrowser.screenX,
 			gBrowser.selectedBrowser.screenY,
@@ -233,6 +258,8 @@ UC.MGest = {
 			TBrect,
 			TBwidth,
 			TBheight,
+			xContentOffset,
+			yContentOffset,
 		}
 		return this.getDimensions_cache
 	},
@@ -248,10 +275,9 @@ UC.MGest = {
 	// FIXME: MIGRATE to webassembly, jankiness is produced by this calculation
 	// TODO: avoid using the image data from canvas, use the raw bitmap directly
 	// TODO: use the first bitmap as reference instead of re-getting the image data from the canvas, TBheight defines the amount of loops to perform
-	fullExpandPixelRow: function (canvas, bitmap) {
+	fullExpandPixelRow: function (canvas, ctx, bitmap) {
 		const { TBwidth, TBheight } = this.getDimensions()
 
-		const ctx = canvas.getContext('2d', CONTEXT_SETTINGS)
 		const START_HEIGHT = 0
 		const PIXEL_ROWS_TO_USE = 4
 
@@ -269,7 +295,7 @@ UC.MGest = {
 		// imageData.data is a Uint8ClampedArray containing RGBA values
 		// Make a seamless verticall pattern with the first 4 pixel rows
 		for (let i = 0, j = 0; i < data.length; i += 4, j += 4) {
-			if (j === firstRowData.length) j = 0
+			if (j == firstRowData.length) j = 0
 
 			data[i] = firstRowData[j] // red
 			data[i + 1] = firstRowData[j + 1] // green
@@ -284,14 +310,203 @@ UC.MGest = {
 		ctx.putImageData(imageData, 0, 0)
 	},
 
-	dynamicScreenshot: async function (force = false) {
+	cropScreenshotRectIfNeeded: function (rect, aTab = null) {
+		if (aTab) {
+			const savedBuffer = this._buffers.get(aTab)
+			if (savedBuffer?.isRectCrop) {
+				console.log('Using saved rect without cropping')
+				return savedBuffer.rect
+			}
+		}
+		console.info('Cropping rect:', rect, [aTab])
+
+		let cropped = false
+		let width = rect.width * window.devicePixelRatio
+		let height = rect.height * window.devicePixelRatio
+		const {
+			BrowserHeight,
+			BrowserWidth,
+			TBheight: ToolbarHeight,
+		} = this.getDimensions()
+
+		if (width > MAX_CAPTURE_DIMENSION) {
+			width = MAX_CAPTURE_DIMENSION
+			cropped = true
+		}
+		if (height > MAX_CAPTURE_DIMENSION) {
+			height = MAX_CAPTURE_DIMENSION
+			cropped = true
+		}
+		if (width * height > MAX_CAPTURE_AREA) {
+			height = Math.floor(MAX_CAPTURE_AREA / width)
+			cropped = true
+		}
+		if (width > BrowserWidth) {
+			console.info('[OPTIMIZATION] Rect exceeding browser width')
+			width = BrowserWidth
+		}
+
+		if (height <= BrowserHeight) {
+			console.info(
+				'[OPTIMIZATION] Rect fit only toolbar, only taking screenshot of toolbar height'
+			)
+			height = ToolbarHeight
+		} else if (rect.height >= BrowserHeight) {
+			// TODO: add a tiny space to account for infinite scrolling
+			console.info(
+				'[OPTIMIZATION] Removing window - toolbar height of screenshot'
+			)
+			height = Math.max(height - BrowserHeight + ToolbarHeight * 2, 0)
+		}
+
+		//* TEMP FIX
+		//* Use the total screen width instead the rect width, this is because absolute/relative positioning may break the screenshot dimensions
+		// rect.width = Math.floor(width / rect.devicePixelRatio)
+		rect.width = Math.floor(BrowserWidth / window.devicePixelRatio)
+		rect.height = Math.floor(height / window.devicePixelRatio)
+		rect.right = rect.left + rect.width
+		rect.bottom = rect.top + rect.height
+
+		// FIXME: do this in a single call and stop writting spaguetti code
+		rect.left = Math.round(rect.left)
+		rect.right = Math.round(rect.right)
+		rect.top = Math.round(rect.top)
+		rect.bottom = Math.round(rect.bottom)
+		rect.width = Math.round(rect.right - rect.left)
+		rect.height = Math.round(rect.bottom - rect.top)
+
+		if (aTab) {
+			// TODO: improve method to save buffer as this should be done in a single call
+			console.log('Saving RECT BUFFER', rect, aTab)
+			this.setTabBuffer(aTab, 'isRectCrop', true)
+			this.setTabBuffer(aTab, 'rect', rect)
+		}
+		if (cropped) console.warn('SCREENSHOT CROPPED!\nMax area:', width * height)
+
+		return rect
+	},
+
+	processSnapshot: async function (aTab) {
+		// TODO: make this function cancellable/resumable?
+
+		const buffer = this._buffers.get(aTab)
+		if (!buffer?.rect) return -1
+
+		// Reduce the amount of memory used by the canvas
+		const region = this.cropScreenshotRectIfNeeded(buffer.rect, aTab)
+
+		const browsingContext = aTab.browsingContext
+		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
+
+		console.info(
+			'Setting canvas region\nwidthxheight',
+			[region?.width, region?.height],
+			region
+		)
+
+		Object.assign(this.CANVAS, {
+			width: region.width * window.devicePixelRatio,
+			height: region.height * window.devicePixelRatio,
+		})
+
+		const snapshotSize = Math.floor(
+			MAX_SNAPSHOT_DIMENSION * window.devicePixelRatio
+		)
+
+		console.time('DynamicTabBar:TotalDrawTime') //* Debug
+
+		// Add offset so start after the Toolbar region paint
+		// TODO: change offset dynamically
+		const { xContentOffset, yContentOffset } = this.getDimensions()
+		if (region.height <= yContentOffset) {
+			console.log('Ignoring draw request as content is only toolbar height')
+			return 1
+		}
+
+		//! Iterates from Left to right, then top to bottom
+		for (
+			let startTop = region.top;
+			startTop < region.bottom;
+			startTop += MAX_SNAPSHOT_DIMENSION
+		) {
+			for (
+				let startLeft = region.left;
+				startLeft < region.right;
+				startLeft += MAX_SNAPSHOT_DIMENSION
+			) {
+				console.time('DynamicTabBar:SnapshotTime')
+
+				let height =
+					startTop + MAX_SNAPSHOT_DIMENSION > region.bottom
+						? region.bottom - startTop
+						: MAX_SNAPSHOT_DIMENSION
+				let width =
+					startLeft + MAX_SNAPSHOT_DIMENSION > region.right
+						? region.right - startLeft
+						: MAX_SNAPSHOT_DIMENSION
+				let rect = new DOMRect(startLeft, startTop, width, height)
+
+				let startSnapshotTime = window.performance.now()
+				let snapshot = await browsingContext.currentWindowGlobal.drawSnapshot(
+					rect,
+					window.devicePixelRatio,
+					'rgb(255,255,255)'
+				)
+
+				//* Debug
+				let endSnapshotTime = window.performance.now()
+				console.log(
+					`Snapshot Time took: ${endSnapshotTime - startSnapshotTime} ms`
+				)
+
+				let left = Math.floor(
+					(startLeft - region.left) * window.devicePixelRatio
+				)
+				let top = Math.floor((startTop - region.top) * window.devicePixelRatio)
+				ctx.drawImage(
+					snapshot,
+					left - (left % snapshotSize) + xContentOffset, // Start drawing after the sidebar (if any)
+					top - (top % snapshotSize) + yContentOffset, // Start drawing after the toolbar height
+					Math.floor(width * window.devicePixelRatio),
+					Math.floor(height * window.devicePixelRatio)
+				)
+
+				snapshot.close()
+				console.timeEnd('DynamicTabBar:SnapshotTime') //* Debug
+			}
+		}
+
+		//* Debug
+		console.timeEnd('DynamicTabBar:TotalDrawTime')
+		return 1
+	},
+
+	dynamicScreenshot: async function () {
+		const tabRef = gBrowser.selectedBrowser
+
+		if (this._tabProcessingQueue.has(tabRef)) {
+			console.log('Ignoring draw request, tab already on queue', tabRef)
+			return
+		}
+
+		console.log('Adding tab to processing queue', tabRef)
+		//* Create an AbortController
+		//* https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal#implementing_an_abortable_api
+		// const abortController = new AbortController()
+		// const { signal } = abortController
+		// this._tabProcessingQueue.set(tabRef, 'abortSignal', signal)
+		this._tabProcessingQueue.set(tabRef, 'processing')
+
+		this._dynamicScreenshot(arguments).finally(() => {
+			console.log('Removing tab of processing queue:', tabRef)
+			this._tabProcessingQueue.delete(tabRef)
+		})
+	},
+
+	_dynamicScreenshot: async function (force = false, overrideColor = null) {
 		window.console.time('dynamicScreenshot')
 		console.log(`dynamicScreenshot(${force ? 'true' : 'false'})`)
 		const { TBwidth, TBheight, ContentRect } = this.getDimensions()
-
-		// update dimensions
-		this.CANVAS.width = TBwidth
-		this.CANVAS.height = ContentRect.height
 
 		// Todo: check if handling fullscreen is actually needed...
 		if (window.fullScreen && window.FullScreen.navToolboxHidden) {
@@ -303,26 +518,38 @@ UC.MGest = {
 		// before any style flush and layout, we should wait for the
 		// second animation frame.
 		await new Promise((r) => window.requestAnimationFrame(r))
-		Services.tm.dispatchToMainThread(async () => {
-			const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
+		// Defer paint to the next tick of the event loop since
+		//Services.tm.dispatchToMainThread(async () => {
+		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
 
-			if (!force) {
-				const _currentTab = this._currentTab
-				const imgData = this._buffers.get(_currentTab)
-				if (imgData) {
-					console.log(
-						'Using saved buffer image data of tab',
-						_currentTab,
-						imgData
-					)
-					ctx.putImageData(imgData, 0, 0)
-					return
-				}
+		// update dimensions
+		this.CANVAS.width = TBwidth
+		this.CANVAS.height = ContentRect.height
+
+		if (!force) {
+			const _currentTab = this._currentTab
+			const savedBuffer = this._buffers.get(_currentTab)
+			if (savedBuffer?.imgData) {
+				const { imgData } = savedBuffer
+				console.log(
+					'Using saved buffer image data of tab',
+					_currentTab,
+					imgData
+				)
+				ctx.putImageData(imgData, 0, 0)
+				return
 			}
+		}
 
-			// Apply pattern if requested
-			this.firstLoadScreenshot()
+		// Apply pattern if requested
+		this.firstLoadScreenshot(overrideColor)
+		this.setTabBuffer(gBrowser.selectedBrowser, 'isRectCrop', false)
 
+		const result = await this.processSnapshot(gBrowser.selectedBrowser)
+
+		//* Default way of getting the snapshot
+		if (!result) {
+			console.info('Using default screenshot way\nError code:', result)
 			// Get the canvas context and draw the snapshot
 			const scale = this.getScale()
 			const imgBitmap =
@@ -345,29 +572,41 @@ UC.MGest = {
 			}
 
 			imgBitmap.close()
-			window.console.timeEnd('dynamicScreenshot')
+		}
+		window.console.timeEnd('dynamicScreenshot')
 
-			// Wait till the canvas finish painting
-			lazy.setTimeout(() => {
-				const saveImageBuffer = ctx.getImageData(
-					0,
-					0,
-					this.CANVAS.width,
-					this.CANVAS.height
-				)
-				console.log(
-					'creating buffer for tab:',
-					window.gBrowser.selectedTab,
-					saveImageBuffer
-				)
-				// Save image data as buffer
-				this._buffers.set(window.gBrowser.selectedTab, saveImageBuffer)
-			})
+		// Wait till the canvas finish painting
+		lazy.setTimeout(() => {
+			const saveImageBuffer = ctx.getImageData(
+				0,
+				0,
+				this.CANVAS.width,
+				this.CANVAS.height
+			)
+			console.log(
+				'creating buffer for tab:',
+				window.gBrowser.selectedTab,
+				saveImageBuffer
+			)
+			// Save image data as buffer (currentData could be not yet set, use a empty object)
+			this.setTabBuffer(window.gBrowser.selectedTab, 'imgData', saveImageBuffer)
 		})
 	},
 
-	firstLoadScreenshot: async function () {
+	firstLoadScreenshot: async function (overrideColor = null) {
 		window.console.time('firstLoadScreenshot')
+		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
+
+		// TODO: sanitize overrideColor
+		if (overrideColor) {
+			console.info('Using theme color override:', overrideColor)
+			ctx.fillStyle = 'overrideColor' // Set the color you want for the rectangle
+			ctx.fillRect(0, 0, this.CANVAS.width, this.CANVAS.height)
+
+			window.console.timeEnd('firstLoadScreenshot')
+			return
+		}
+
 		const { TBrect } = this.getDimensions()
 		const scale = this.getScale()
 		const imgBitmap =
@@ -378,10 +617,7 @@ UC.MGest = {
 				false // fullViewport
 			)
 
-		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
 		ctx.drawImage(imgBitmap, 0, 0)
-
-		imgBitmap.close()
 
 		window.console.timeEnd('firstLoadScreenshot')
 
@@ -389,7 +625,9 @@ UC.MGest = {
 		// Note: when using this pattern method, BLUR FILTER MUST BE DISABLED
 		// TODO: use Element.animate (https://hacks.mozilla.org/2016/08/animating-like-you-just-dont-care-with-element-animate)
 		this.CANVAS.style.transform = 'translateY(0px)'
-		this.fullExpandPixelRow(this.CANVAS)
+		console.debug('fullExpandPixelRow bitmap:', imgBitmap)
+		this.fullExpandPixelRow(this.CANVAS, ctx, imgBitmap)
+		imgBitmap.close()
 	},
 
 	/**
@@ -426,6 +664,12 @@ UC.MGest = {
 		return debouncedFunction
 	},
 
+	speculativeLoadTab: function () {
+		//* https://searchfox.org/mozilla-central/source/browser/components/tabbrowser/content/tab.js#587
+		// If the tab was tracker, preload the cache content in an offscreencanvas
+		// remove if the tab is unhovered (timer based?)
+	},
+
 	setupDynamicListeners: function () {
 		EventTracker.removeAllTrackedEventListeners()
 
@@ -458,8 +702,16 @@ UC.MGest = {
 					})
 					window.addEventListener(
 						'MozAfterPaint',
-						() => {
+						async () => {
+							// Since requestAnimationFrame callback is generally triggered
+							// before any style flush and layout, we should wait for the
+							// second animation frame.
+							await new Promise((r) => window.requestAnimationFrame(r))
+							await new Promise((r) => window.requestAnimationFrame(r))
+
 							this.getDimensions(true)
+							// TODO: optimization, instead of redrawing everything from scratch, just create a variable to
+							// account for and add the offset of the new toolbar height...?
 							this.dynamicScreenshot(true)
 						},
 						{ once: true }
@@ -476,23 +728,6 @@ UC.MGest = {
 			}
 		)
 
-		EventTracker.addTrackedEventListener(
-			window.gBrowser.tabContainer,
-			'TabClose',
-			(event) => {
-				lazy.setTimeout(() => {
-					console.log(
-						'Tab closed!',
-						event,
-						{ isInWeakMap: this._buffers.has(this._currentTab) },
-						this._buffers
-					)
-				})
-			}
-		)
-
-		// TODO: read this
-		//! https://searchfox.org/mozilla-central/source/browser/components/tabbrowser/content/tabbrowser.js
 		EventTracker.addTrackedEventListener(
 			window.gBrowser.tabContainer,
 			'TabSelect',
@@ -824,13 +1059,14 @@ UC.MGest = {
 		this.initializeElements()
 		this.getDimensions()
 		this.setupDynamicListeners()
-		Services.obs.addObserver(this, 'UCJS:WebExtLoaded')
 
 		/**
 		 * Listen to location changes, when you change the url
 		 ** NOTE: For testing purposes this function is defined like this
 		 ** A lot of stuff taken from here: https://searchfox.org/mozilla-central/source/browser/components/shell/HeadlessShell.sys.mjs#57
 		 ** and here: https://searchfox.org/mozilla-central/source/devtools/server/actors/resources/parent-process-document-event.js#98
+		 ** and here: https://searchfox.org/mozilla-central/source/browser/components/asrouter/modules/ASRouterTriggerListeners.sys.mjs#393
+		 ** and here also: https://searchfox.org/mozilla-central/source/browser/components/tabbrowser/content/tabbrowser.js#7181
 		 */
 		this.tabProgressListener.onLocationChange = async function (
 			aBrowser,
@@ -839,78 +1075,141 @@ UC.MGest = {
 			_uri, // location
 			flags
 		) {
+			// Some websites trigger redirect events after they finish loading even
+			// though the location remains the same. This results in onLocationChange
+			// events to be fired twice.
+			// Also, we don't care about inner-frame navigations
+			const isSameDocument = !!(
+				flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT
+			)
+			if (!webProgress.isTopLevel || isSameDocument) {
+				console.log('Ignoring inner-frame events onLocationChange')
+				return
+			}
+
 			// Ignore event of other browsers tabs
 			if (window.gBrowser.selectedBrowser !== aBrowser) {
 				console.info('Ignoring event onLocationChange of browser', aBrowser)
 				return
 			}
+			console.log('🔶onLocationChange!', _uri.spec, arguments)
 
-			console.log('onLocationChange!', _uri.spec, arguments)
+			const isAbout = _uri.schemeIs('about')
+			if (isAbout) {
+				console.log('Is about: tab')
 
-			// Some websites trigger redirect events after they finish loading even
-			// though the location remains the same. This results in onLocationChange
-			// events to be fired twice.
-			const isSameDocument = !!(
-				flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT
-			)
-			// Ignore the initial about:blank, unless about:blank is requested
-			if (_uri.spec == 'about:blank') {
-				console.log('onLocationChange: Ignoring about:blank', arguments)
-				return
-			}
-
-			if (webProgress.isTopLevel && !isSameDocument) {
-				console.log('onLocationChange top level')
-				const isLoadingDocument = webProgress.isLoadingDocument
-				if (isLoadingDocument) {
-					console.log('Waiting for document to stop loading, before screenshot')
+				// Ignore the initial about:blank, unless about:blank is requested
+				if (_uri.spec == 'about:blank') {
+					console.log('onLocationChange: Ignoring about:blank', arguments)
+					if (
+						!aBrowser.contentPrincipal ||
+						aBrowser.contentPrincipal.isNullPrincipal
+					) {
+						console.info('Ignoring about:blank null principal')
+						// For an about:blank with a null principal we want to ignore it
+						return
+					}
+					// If it's not a null principal, there may be content loaded into it,
+					// so we proceed as normal
+					// TODO: Handle about:blank
+				} else if (
+					window.AboutNewTab.enabled &&
+					_uri.spec == window.AboutNewTab.newTabURL
+				) {
+					// If it's the new tab and browser.newtab.preload pref is enabled, then the load
+					// event will not fire again for the new tab unless it's manually refreshed by the user.
+					console.log('about:newtab')
+				} else if (_uri.spec.startsWith('about:reader')) {
+					// Reader mode should also be loaded as normal
 				}
 
-				this.dynamicScreenshot(true)
-				//window.gBrowser.removeTabsProgressListener(tabProgressListener) //unregister at first call
+				// If we reach this point, then we should just use the cached color for about: tabs
+				// TODO: handle about: tabs cache colors
+			}
+
+			// Media documents should always start at 1, and are not affected by prefs.
+			const isMedia = aBrowser.isSyntheticDocument
+			if (isMedia) {
+				console.log('Selected tab is a media document, ignoring screenshot')
+				// TODO: handle tabs that will not be painted
 				return
 			}
+
+			console.log('onLocationChange top level')
+
+			const isLoadingDocument = webProgress.isLoadingDocument
+			if (isLoadingDocument) {
+				console.log('Waiting for document to stop loading, before screenshot')
+				// The DOM load is notified using the frame script
+				return
+				/*
+				const listener = new lazy.ProgressListener(webProgress, {
+					resolveWhenStarted: false,
+				})
+				const navigated = listener.start()
+				navigated.finally(() => {
+					console.log('navigated finally')
+					if (listener.isStarted) {
+						listener.stop()
+					}
+				})
+				await navigated
+				*/
+			}
+
 			if (_uri.hasRef) {
-				// If the target URL contains a hash, handle the navigation without redrawing the buffer
+				// If the target URL contains a hash, handle the navigation without redrawing
 				console.log('onLocationChange not top level with hash: ' + _uri)
 				this.dynamicScreenshot()
 				return
 			}
 
-			// when changing page without reloading the page, eg NextJS
-			// We can also get here because of inner-frame events
-			console.log(
-				'onLocationChange not top level, reached end of function.\nShould execute?'
-			)
-			//this.dynamicScreenshot(true)
+			console.log('onLocationChange reached end of function', arguments)
+			this.dynamicScreenshot(true)
 		}.bind(this)
 
-		window.gBrowser.addTabsProgressListener(this.tabProgressListener, {
-			waitForExplicitStart: true,
-		})
+		window.gBrowser.addTabsProgressListener(
+			this.tabProgressListener,
+			Ci.nsIWebProgress.NOTIFY_STATE_ALL
+		)
+		Services.obs.addObserver(this, 'UCJS:WebExtLoaded')
+
+		// Force load
+		this.dynamicScreenshot()
 	},
 
 	receiveMessage: function (msg) {
-		console.log(`[EVENT - ${msg.name}] Mousegeestures.uc.js`, msg)
-		if (!this.CANVAS) return
+		const aTab = msg.target
+		console.debug(`[EVENT - ${msg.name}] Mousegeestures.uc.js`, aTab, msg)
+
+		// Ignore if it's not the selected
+		if (!this.CANVAS || aTab != gBrowser.selectedBrowser) return
+
+		// Always set the latest dimensions for the tab
+		this.setTabBuffer(aTab, 'rect', msg.data.screen)
 
 		switch (msg.name) {
-			case 'DynamicTabBar:TabReady':
-				// Do something
+			case 'DynamicTabBar:TabReady': {
+				console.log('Tab ready, taking screenshot', msg.data)
+				const overrideColor = msg.data.themeColor
+				this.dynamicScreenshot(true, overrideColor)
 				break
+			}
 
-			case 'DynamicTabBar:Scroll':
+			case 'DynamicTabBar:Scroll': {
 				const { scrollY, scrollX, width, height, top, left } = msg.data.screen
 				const scrollPosition = scrollY || 0
 				this.CANVAS.style.transform = `translateY(-${scrollPosition}px)`
 				break
+			}
 		}
 	},
 
 	_debounceScrollRef: null,
 	exec: function (win) {
 		const { customElements, document, gBrowser } = win
-		console.log('EXEC!', win, customElements, document, gBrowser, {
+		console.log('EXEC!', this, win, customElements, document, gBrowser, {
+			//* this means we are using the same instance that was first created when the browser started
 			_isNewInstance: this._isNewInstance,
 		})
 
@@ -927,7 +1226,13 @@ UC.MGest = {
 
 	init: function () {
 		this._isNewInstance = false
-		if (Services.appinfo.inSafeMode) return
+		if (Services.appinfo.inSafeMode) {
+			// Don't you try to skip this, safe mode disables a lot of graphic features and the GPU
+			console.log(
+				'Browser in safe mode, skipping initialization of DynamicTabBar component'
+			)
+			return
+		}
 
 		window.addEventListener(
 			'MozAfterPaint',
@@ -966,9 +1271,9 @@ UC.MGest = {
 		window.messageManager.removeDelayedFrameScript(
 			'resource://userchromejs/mouseGestures/MGestParent.sys.mjs'
 		)
-		// TODO: remove canvas and other elements that were created
+		this._cachedBuffers.clear()
+		this._buffers.clear()
 		EventTracker.destroy()
-
 		this.initializeElements(true)
 		delete UC.MGest
 	},
