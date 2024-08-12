@@ -272,6 +272,54 @@ UC.MGest = {
 		return scale
 	},
 
+	fetchDimensions: function (aBrowser) {
+		return new Promise((resolve, reject) => {
+			console.log('fetchDimensions promise')
+
+			const mm = aBrowser.messageManager
+
+			const timer = lazy.setTimeout(() => {
+				console.info('fetchDimensions timeout')
+				mm.removeMessageListener(
+					'DynamicTabBar:Dimensions',
+					handleFetchDimensionsEvent
+				)
+				reject('fetchDimensions timeout')
+			}, 3000)
+
+			function handleFetchDimensionsEvent(msg) {
+				lazy.clearTimeout(timer)
+				const dimensions = msg.data.screen
+
+				// Clean up the event listener
+				mm.removeMessageListener(
+					'DynamicTabBar:Dimensions',
+					handleFetchDimensionsEvent
+				)
+
+				if (dimensions) return resolve(dimensions)
+				reject('fetchDimensions Invalid dimensions data')
+			}
+
+			mm.addMessageListener(
+				'DynamicTabBar:Dimensions',
+				handleFetchDimensionsEvent
+			)
+			// Send a message to the content script
+			gBrowser.selectedBrowser.messageManager.sendAsyncMessage(
+				'DynamicTabBar:FetchDimensions'
+			)
+		})
+	},
+
+	fetchFullPageBounds: async function (aBrowser) {
+		const dimensions = await this.fetchDimensions(aBrowser)
+		if (!dimensions) return null
+
+		this.setTabBuffer(aBrowser, 'rect', dimensions)
+		return dimensions
+	},
+
 	// FIXME: MIGRATE to webassembly, jankiness is produced by this calculation
 	// TODO: avoid using the image data from canvas, use the raw bitmap directly
 	// TODO: use the first bitmap as reference instead of re-getting the image data from the canvas, TBheight defines the amount of loops to perform
@@ -320,14 +368,16 @@ UC.MGest = {
 		}
 		console.info('Cropping rect:', rect, [aTab])
 
-		let cropped = false
-		let width = rect.width * window.devicePixelRatio
-		let height = rect.height * window.devicePixelRatio
 		const {
 			BrowserHeight,
 			BrowserWidth,
 			TBheight: ToolbarHeight,
 		} = this.getDimensions()
+		const scale = this.getScale()
+
+		let cropped = false
+		let width = rect.width * scale
+		let height = rect.height * scale
 
 		if (width > MAX_CAPTURE_DIMENSION) {
 			width = MAX_CAPTURE_DIMENSION
@@ -351,7 +401,8 @@ UC.MGest = {
 				'[OPTIMIZATION] Rect fit only toolbar, only taking screenshot of toolbar height'
 			)
 			height = ToolbarHeight
-		} else if (rect.height >= BrowserHeight) {
+			rect.skipSetDimensions = true
+		} else if (height >= BrowserHeight) {
 			// TODO: add a tiny space to account for infinite scrolling
 			console.info(
 				'[OPTIMIZATION] Removing window - toolbar height of screenshot'
@@ -362,8 +413,8 @@ UC.MGest = {
 		//* TEMP FIX
 		//* Use the total screen width instead the rect width, this is because absolute/relative positioning may break the screenshot dimensions
 		// rect.width = Math.floor(width / rect.devicePixelRatio)
-		rect.width = Math.floor(BrowserWidth / window.devicePixelRatio)
-		rect.height = Math.floor(height / window.devicePixelRatio)
+		rect.width = Math.floor(BrowserWidth / scale)
+		rect.height = Math.floor(height / scale)
 		rect.right = rect.left + rect.width
 		rect.bottom = rect.top + rect.height
 
@@ -390,10 +441,12 @@ UC.MGest = {
 		// TODO: make this function cancellable/resumable?
 
 		const buffer = this._buffers.get(aTab)
-		if (!buffer?.rect) return -1
+		let rect = buffer?.rect
+		if (!rect) rect = await this.fetchFullPageBounds(aTab)
 
 		// Reduce the amount of memory used by the canvas
-		const region = this.cropScreenshotRectIfNeeded(buffer.rect, aTab)
+		const region = this.cropScreenshotRectIfNeeded(rect, aTab)
+		const scale = this.getScale()
 
 		const browsingContext = aTab.browsingContext
 		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
@@ -404,24 +457,26 @@ UC.MGest = {
 			region
 		)
 
-		Object.assign(this.CANVAS, {
-			width: region.width * window.devicePixelRatio,
-			height: region.height * window.devicePixelRatio,
-		})
+		if (!region.skipSetDimensions) {
+			Object.assign(this.CANVAS, {
+				width: region.width * scale,
+				height: region.height * scale,
+			})
+		} else {
+			console.info(
+				'Ignoring draw request as content is only toolbar height\n',
+				'Skipping canvas set dimensions'
+			)
+			return 1
+		}
 
-		const snapshotSize = Math.floor(
-			MAX_SNAPSHOT_DIMENSION * window.devicePixelRatio
-		)
+		const snapshotSize = Math.floor(MAX_SNAPSHOT_DIMENSION * scale)
 
 		console.time('DynamicTabBar:TotalDrawTime') //* Debug
 
 		// Add offset so start after the Toolbar region paint
 		// TODO: change offset dynamically
 		const { xContentOffset, yContentOffset } = this.getDimensions()
-		if (region.height <= yContentOffset) {
-			console.log('Ignoring draw request as content is only toolbar height')
-			return 1
-		}
 
 		//! Iterates from Left to right, then top to bottom
 		for (
@@ -449,7 +504,7 @@ UC.MGest = {
 				let startSnapshotTime = window.performance.now()
 				let snapshot = await browsingContext.currentWindowGlobal.drawSnapshot(
 					rect,
-					window.devicePixelRatio,
+					scale,
 					'rgb(255,255,255)'
 				)
 
@@ -459,16 +514,14 @@ UC.MGest = {
 					`Snapshot Time took: ${endSnapshotTime - startSnapshotTime} ms`
 				)
 
-				let left = Math.floor(
-					(startLeft - region.left) * window.devicePixelRatio
-				)
-				let top = Math.floor((startTop - region.top) * window.devicePixelRatio)
+				let left = Math.floor((startLeft - region.left) * scale)
+				let top = Math.floor((startTop - region.top) * scale)
 				ctx.drawImage(
 					snapshot,
 					left - (left % snapshotSize) + xContentOffset, // Start drawing after the sidebar (if any)
 					top - (top % snapshotSize) + yContentOffset, // Start drawing after the toolbar height
-					Math.floor(width * window.devicePixelRatio),
-					Math.floor(height * window.devicePixelRatio)
+					Math.floor(width * scale),
+					Math.floor(height * scale)
 				)
 
 				snapshot.close()
@@ -489,7 +542,7 @@ UC.MGest = {
 			return
 		}
 
-		console.log('Adding tab to processing queue', tabRef)
+		console.log('Adding tab to processing queue', tabRef, arguments)
 		//* Create an AbortController
 		//* https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal#implementing_an_abortable_api
 		// const abortController = new AbortController()
@@ -497,7 +550,7 @@ UC.MGest = {
 		// this._tabProcessingQueue.set(tabRef, 'abortSignal', signal)
 		this._tabProcessingQueue.set(tabRef, 'processing')
 
-		this._dynamicScreenshot(arguments).finally(() => {
+		this._dynamicScreenshot(...arguments).finally(() => {
 			console.log('Removing tab of processing queue:', tabRef)
 			this._tabProcessingQueue.delete(tabRef)
 		})
@@ -505,31 +558,32 @@ UC.MGest = {
 
 	_dynamicScreenshot: async function (force = false, overrideColor = null) {
 		window.console.time('dynamicScreenshot')
-		console.log(`dynamicScreenshot(${force ? 'true' : 'false'})`)
-		const { TBwidth, TBheight, ContentRect } = this.getDimensions()
+		console.log(`dynamicScreenshot(${force ? 'true' : 'false'})`, overrideColor)
 
-		// Todo: check if handling fullscreen is actually needed...
 		if (window.fullScreen && window.FullScreen.navToolboxHidden) {
+			// Todo: check if handling fullscreen is actually needed...
 			console.log('fullscreen detected, ignoring screenshot')
 			return
 		}
 
-		// Since requestAnimationFrame callback is generally triggered
-		// before any style flush and layout, we should wait for the
-		// second animation frame.
 		await new Promise((r) => window.requestAnimationFrame(r))
 		// Defer paint to the next tick of the event loop since
-		//Services.tm.dispatchToMainThread(async () => {
+		//*Services.tm.dispatchToMainThread(async () => {
 		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
 
-		// update dimensions
-		this.CANVAS.width = TBwidth
-		this.CANVAS.height = ContentRect.height
-
+		const _currentTab = gBrowser.selectedBrowser
 		if (!force) {
-			const _currentTab = this._currentTab
 			const savedBuffer = this._buffers.get(_currentTab)
 			if (savedBuffer?.imgData) {
+				// update dimensions
+				if (!savedBuffer.rect.skipSetDimensions) {
+					const scale = this.getScale()
+					Object.assign(this.CANVAS, {
+						width: savedBuffer.rect.width * scale,
+						height: savedBuffer.rect.height * scale,
+					})
+				}
+
 				const { imgData } = savedBuffer
 				console.log(
 					'Using saved buffer image data of tab',
@@ -543,36 +597,9 @@ UC.MGest = {
 
 		// Apply pattern if requested
 		this.firstLoadScreenshot(overrideColor)
-		this.setTabBuffer(gBrowser.selectedBrowser, 'isRectCrop', false)
+		this.setTabBuffer(_currentTab, 'isRectCrop', false)
 
-		const result = await this.processSnapshot(gBrowser.selectedBrowser)
-
-		//* Default way of getting the snapshot
-		if (!result) {
-			console.info('Using default screenshot way\nError code:', result)
-			// Get the canvas context and draw the snapshot
-			const scale = this.getScale()
-			const imgBitmap =
-				await window.browsingContext.currentWindowGlobal.drawSnapshot(
-					ContentRect, // DOMRect
-					scale, // Scale
-					'rgb(255, 255, 255)', // Background (required)
-					false // fullViewport
-				)
-			// TODO: handling screenshot gaps:
-			// https://searchfox.org/mozilla-central/source/browser/components/screenshots/ScreenshotsUtils.sys.mjs#1041
-
-			ctx.drawImage(imgBitmap, 0, TBheight) // start draw under the toolbar image
-			if (this.DEBUG_DYNAMIC_TABS) {
-				this.DEBUG_CANVAS.getContext('2d', { alpha: false }).drawImage(
-					imgBitmap,
-					0,
-					0
-				)
-			}
-
-			imgBitmap.close()
-		}
+		const result = await this.processSnapshot(_currentTab)
 		window.console.timeEnd('dynamicScreenshot')
 
 		// Wait till the canvas finish painting
@@ -583,13 +610,9 @@ UC.MGest = {
 				this.CANVAS.width,
 				this.CANVAS.height
 			)
-			console.log(
-				'creating buffer for tab:',
-				window.gBrowser.selectedTab,
-				saveImageBuffer
-			)
+			console.log('creating buffer for tab:', _currentTab, saveImageBuffer)
 			// Save image data as buffer (currentData could be not yet set, use a empty object)
-			this.setTabBuffer(window.gBrowser.selectedTab, 'imgData', saveImageBuffer)
+			this.setTabBuffer(_currentTab, 'imgData', saveImageBuffer)
 		})
 	},
 
@@ -600,7 +623,7 @@ UC.MGest = {
 		// TODO: sanitize overrideColor
 		if (overrideColor) {
 			console.info('Using theme color override:', overrideColor)
-			ctx.fillStyle = 'overrideColor' // Set the color you want for the rectangle
+			ctx.fillStyle = overrideColor // Set the color you want for the rectangle
 			ctx.fillRect(0, 0, this.CANVAS.width, this.CANVAS.height)
 
 			window.console.timeEnd('firstLoadScreenshot')
@@ -1056,6 +1079,16 @@ UC.MGest = {
 			}
 		)
 
+		const DEFAULT_THEME_COLOR_OVERRIDE = false
+		const DEFAULT_THEME_COLOR_OVERRIDE_PREF =
+			'dynamic.browser.component.use_theme_color'
+		XPCOMUtils.defineLazyPreferenceGetter(
+			this,
+			'THEME_COLOR_OVERRIDE',
+			DEFAULT_THEME_COLOR_OVERRIDE_PREF,
+			DEFAULT_THEME_COLOR_OVERRIDE
+		)
+
 		this.initializeElements()
 		this.getDimensions()
 		this.setupDynamicListeners()
@@ -1272,7 +1305,6 @@ UC.MGest = {
 			'resource://userchromejs/mouseGestures/MGestParent.sys.mjs'
 		)
 		this._cachedBuffers.clear()
-		this._buffers.clear()
 		EventTracker.destroy()
 		this.initializeElements(true)
 		delete UC.MGest
