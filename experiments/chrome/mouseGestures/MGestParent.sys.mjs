@@ -110,7 +110,7 @@ addEventListener(
 				`meta[name="theme-color"][media="(prefers-color-scheme: ${colourScheme})"]`
 			)
 			console.info('meta themecolor element for tab', headerTag)
-			if (headerTag === null)
+			if (headerTag == null)
 				headerTag = document.querySelector(`meta[name="theme-color"]`)
 
 			data = {
