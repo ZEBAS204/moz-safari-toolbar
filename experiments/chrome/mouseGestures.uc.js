@@ -37,6 +37,9 @@ const BLUR_TYPES = {
 const { XPCOMUtils } = ChromeUtils.import(
 	'resource://gre/modules/XPCOMUtils.jsm'
 )
+const { BasePromiseWorker } = ChromeUtils.importESModule(
+	'resource://gre/modules/PromiseWorker.sys.mjs'
+)
 
 const gBrowser = window.gBrowser
 
@@ -143,7 +146,6 @@ const lazy = {}
 ChromeUtils.defineESModuleGetters(lazy, {
 	BrowserUtils: 'resource://gre/modules/BrowserUtils.sys.mjs',
 	PrivateBrowsingUtils: 'resource://gre/modules/PrivateBrowsingUtils.sys.mjs',
-	ActorManagerParent: 'resource://gre/modules/ActorManagerParent.sys.mjs',
 	clearTimeout: 'resource://gre/modules/Timer.sys.mjs',
 	setTimeout: 'resource://gre/modules/Timer.sys.mjs',
 })
@@ -155,18 +157,21 @@ const IS_PRIVATE_WINDOW = lazy.PrivateBrowsingUtils.isWindowPrivate(
 	window.gBrowser.ownerGlobal
 )
 
-//* Sidebar compatibility
-// TODO: do something with sidebar?
-const SIDEBAR_ENABLED_PREF = 'sidebar.revamp'
-const IS_SIDEBAR_ENABLED = Services.prefs.getBoolPref(SIDEBAR_ENABLED_PREF)
+/**
+ * Interface to a dedicated thread handling canvas manipulation
+ */
+const MGestWorker = new BasePromiseWorker(
+	'resource://userchromejs/mouseGestures.worker.js'
+)
 
 // TODO: make this object an actual class
 UC.MGest = {
-	// debug tracking to know how this context works
-	_isNewInstance: true,
+	_isNewInstance: true, // debug tracking to know how this context works
+	_isSidebarEnabled: Services.prefs.getBoolPref('sidebar.revamp'),
 
-	_tabProcessingQueue: new WeakMap(),
 	getDimensions_cache: null,
+	_mainResizeObserver: null,
+	_tabProcessingQueue: new WeakMap(),
 
 	_currentTab: window.gBrowser.selectedTab,
 	_isContextLost: false,
@@ -257,10 +262,10 @@ UC.MGest = {
 		return this.getDimensions_cache
 	},
 
-	getScale: function () {
-		const scale =
-			window.devicePixelRatio * window.gBrowser.selectedBrowser.fullZoom
-		//const scale = Math.round(window.gBrowser.selectedBrowser.fullZoom * 100) / 100
+	getScale: function (_aBrowser) {
+		const aBrowser = window.gBrowser.selectedBrowser // todo: TEMP FIX, use the selected browser's scale
+		const scale = window.devicePixelRatio * aBrowser.fullZoom
+		//const scale = Math.round(aBrowser.fullZoom * 100) / 100
 
 		return scale
 	},
@@ -313,37 +318,15 @@ UC.MGest = {
 		return dimensions
 	},
 
-	// TODO: MIGRATE to webassembly, jankiness is produced by this calculation
-	fullExpandPixelRow: function (bitmap, ctxCANVAS) {
+	fullExpandPixelRow: async function (bitmap, ctxCANVAS) {
 		const { TBwidth, TBheight, xContentOffset, contentWidth } =
 			this.getDimensions()
 
-		const canvas = new OffscreenCanvas(TBwidth, TBheight)
-		const ctx = canvas.getContext('2d', CONTEXT_SETTINGS)
-		ctx.drawImage(bitmap, 0, 0)
+		const data = [bitmap, TBwidth, TBheight, contentWidth, xContentOffset]
+		let workerBitmap = await MGestWorker.post('fullExpandPixelRow', data)
 
-		const START_HEIGHT = 0
-		const PIXEL_ROWS_TO_USE = 4
-		let firstRow = ctx.getImageData(0, START_HEIGHT, contentWidth, TBheight)
-		let data = firstRow.data
-
-		// Make a seamless verticall pattern with the first 4 pixel rows
-		// Remember Uint8ClampedArray takes a RGBA array [r,g,b,a] for a single bit,
-		// so we have to create an array contanining the tab bar dimensions * 4
-		const iLength = data.length
-		const firstRowDatalength = contentWidth * PIXEL_ROWS_TO_USE * 4 //firstRowData.length
-		const skipPaintedRow = firstRowDatalength
-		for (let i = skipPaintedRow, j = 0; i < iLength; i += 4, j += 4) {
-			if (j == firstRowDatalength) j = 0
-
-			data[i] = data[j] // red
-			data[i + 1] = data[j + 1] // green
-			data[i + 2] = data[j + 2] // blue
-			data[i + 3] = 255 // alpha
-		}
-
-		// Draw
-		ctxCANVAS.putImageData(firstRow, xContentOffset, 0)
+		ctxCANVAS.drawImage(workerBitmap, 0, 0)
+		workerBitmap.close()
 	},
 
 	cropScreenshotRectIfNeeded: function (rect, aTab = null) {
@@ -442,7 +425,6 @@ UC.MGest = {
 		const scale = this.getScale()
 
 		const browsingContext = aTab.browsingContext
-		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
 
 		console.info(
 			'Setting canvas region\nwidthxheight',
@@ -452,7 +434,7 @@ UC.MGest = {
 
 		if (!region.skipSetDimensions) {
 			Object.assign(this.CANVAS, {
-				width: region.width * scale,
+				// width: region.width * scale,
 				height: region.height * scale,
 			})
 		} else {
@@ -460,15 +442,15 @@ UC.MGest = {
 				'Ignoring draw request as content is only toolbar height\n',
 				'Skipping canvas set dimensions'
 			)
-			return 1
+			return
 		}
 
+		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
 		const snapshotSize = Math.floor(MAX_SNAPSHOT_DIMENSION * scale)
 
 		let totalDrawTime = window.performance.now()
 
 		// Add offset so start after the Toolbar region paint
-		// TODO: change offset dynamically
 		const { xContentOffset, yContentOffset } = this.getDimensions()
 
 		//! Iterates from Left to right, then top to bottom
@@ -499,7 +481,8 @@ UC.MGest = {
 				let snapshot = await browsingContext.currentWindowGlobal.drawSnapshot(
 					rect,
 					scale,
-					'rgb(255,255,255)'
+					'transparent',
+					true
 				)
 
 				//* Debug
@@ -528,7 +511,6 @@ UC.MGest = {
 		console.log(
 			`Processing all snapshots took: ${totalDrawTimeEnd - totalDrawTime}ms`
 		)
-		return 1
 	},
 
 	dynamicScreenshot: async function () {
@@ -571,25 +553,17 @@ UC.MGest = {
 		const _currentTab = gBrowser.selectedBrowser
 		const savedBuffer = this._buffers.get(_currentTab)
 		if (!force) {
-			if (savedBuffer?.imgData) {
-				// update dimensions
-				if (!savedBuffer.rect.skipSetDimensions) {
-					const scale = this.getScale()
-					Object.assign(this.CANVAS, {
-						width: savedBuffer.rect.width * scale,
-						height: savedBuffer.rect.height * scale,
-					})
-				} else {
-					console.info('Skipping canvas set dimensions')
-				}
-
-				const { imgData } = savedBuffer
+			let imgData = savedBuffer?.imgData
+			if (imgData) {
 				console.log(
 					'Using saved buffer image data of tab',
 					_currentTab,
 					imgData
 				)
-				window.requestAnimationFrame(() => ctx.putImageData(imgData, 0, 0))
+				ctx.putImageData(imgData, 0, 0)
+				// TODO: restore using the last known location
+				this.CANVAS.style.transform = 'translateY(0px)'
+
 				window.console.timeEnd('dynamicScreenshot')
 				return
 			}
@@ -620,10 +594,11 @@ UC.MGest = {
 		const ctx = this.CANVAS.getContext('2d', CONTEXT_SETTINGS)
 		const { TBrect, TBheight } = this.getDimensions()
 
-		// TODO: sanitize overrideColor
-		if (overrideColor) {
+		// TODO: dont repaint canvas, use a solid element instead
+		// Always check if the override color is a valid CSS color
+		if (overrideColor && CSS.supports('color', overrideColor)) {
 			console.info('Using theme color override:', overrideColor)
-			ctx.fillStyle = overrideColor // Set the color you want for the rectangle
+			ctx.fillStyle = overrideColor
 			ctx.fillRect(0, 0, this.CANVAS.width, TBheight)
 
 			window.console.timeEnd('firstLoadScreenshot')
@@ -632,14 +607,10 @@ UC.MGest = {
 
 		const scale = this.getScale()
 		const context = aBrowser.browsingContext.currentWindowGlobal
-		let imgBitmap = await context.drawSnapshot(
-			TBrect,
-			scale,
-			'rgb(255,255,255)'
-		)
+		let imgBitmap = await context.drawSnapshot(TBrect, scale, 'transparent')
 
 		this.CANVAS.style.transform = 'translateY(0px)'
-		this.fullExpandPixelRow(imgBitmap, ctx)
+		await this.fullExpandPixelRow(imgBitmap, ctx)
 		imgBitmap.close()
 
 		window.console.timeEnd('firstLoadScreenshot')
@@ -689,23 +660,30 @@ UC.MGest = {
 		EventTracker.removeAllTrackedEventListeners()
 
 		// Toolbox Customization glue support
-		/*
 		EventTracker.addTrackedEventListener(
 			window.gNavToolbox,
 			'customizationstarting',
-			window.requestAnimationFrame(function (event) {
-				console.log(
-					'Browser Chrome Customization started, hiding canvas',
-					event
-				)
+			async function () {
 				// TODO: cancel canvas paint
+				// FIXME: use willChange auto instead of null. DEPENDS ON REMOVING WILL-CHANGE: transform CSS PROPERTY OF THE CANVAS
+				this.CANVAS.style.willChange = 'visibility'
+				await new Promise((r) => window.requestAnimationFrame(r))
+				this.CANVAS.style.visibility = 'hidden'
+				this.CANVAS.style.willChange = null
 
-				window.gNavToolbox.addEventListener('aftercustomization', (event) => {
-					// restore?
-				}, {once: true})
-			})
+				// Wait for customization to finish
+				window.gNavToolbox.addEventListener(
+					'aftercustomization',
+					async () => {
+						this.CANVAS.style.willChange = 'visibility'
+						await new Promise((r) => window.requestAnimationFrame(r))
+						this.CANVAS.style.visibility = null
+						this.CANVAS.style.willChange = null
+					},
+					{ once: true }
+				)
+			}.bind(this)
 		)
-		*/
 
 		window.gNavToolbox.querySelectorAll('toolbar').forEach((childToolbar) => {
 			EventTracker.addTrackedEventListener(
@@ -800,10 +778,18 @@ UC.MGest = {
 		EventTracker.addTrackedEventListener(
 			window,
 			'resize',
-			this.debounce((event) => {
+			this.debounce(() => {
 				// console.log('Window resized!', event)
-				this.getDimensions(true)
-				this.dynamicScreenshot()
+				const scale = this.getScale()
+				const { TBwidth } = this.getDimensions(true)
+
+				window.requestAnimationFrame(() => {
+					Object.assign(this.CANVAS, {
+						width: TBwidth * scale,
+					})
+				})
+
+				this.dynamicScreenshot(true)
 			}, 300)
 		)
 		EventTracker.addTrackedEventListener(
@@ -819,8 +805,9 @@ UC.MGest = {
 					'\nCalculated Scale =',
 					this.getScale()
 				)
-				this.getDimensions(true)
-				this.dynamicScreenshot()
+				window.requestAnimationFrame(() => {
+					this.CANVAS.style.scale = this.getScale()
+				})
 			}, 300)
 		)
 
@@ -837,6 +824,23 @@ UC.MGest = {
 				})
 			}
 		)
+
+		if (this._mainResizeObserver) this._mainResizeObserver.disconnect()
+		if (!this._isSidebarEnabled) return
+
+		this._mainResizeObserver = new window.ResizeObserver(
+			// TODO: cancel painting and debounce resize
+			async function ([entry]) {
+				await new Promise((r) => window.requestAnimationFrame(r))
+
+				console.log('Resize observer trigger!', entry)
+				this.dynamicScreenshot(true)
+			}.bind(this)
+		)
+		console.log('_mainResizeObserver', this._mainResizeObserver)
+		const appContent = window.document.getElementById('appcontent')
+		console.log('App content?', appContent)
+		this._mainResizeObserver.observe(appContent)
 	},
 
 	/**
@@ -902,7 +906,12 @@ UC.MGest = {
 
 			// Add blur slider
 			blurSlider.addEventListener('input', () => {
-				this.CANVAS.style.filter = `blur(${blurSlider.value}px)`
+				// this.CANVAS.style.filter = `blur(${blurSlider.value}px)`
+				//* Hacky way of bypassyng the getter only property
+				Object.defineProperty(this, 'DYNAMIC_TAB_BAR_BLUR_AMOUNT', {
+					value: blurSlider.value,
+				})
+				console.log('Updated blur:', blurSlider.value)
 			})
 		}
 
@@ -981,6 +990,9 @@ UC.MGest = {
 		this.CANVAS.mozOpaque = true
 
 		window.gNavToolbox.parentNode.insertBefore(this.CANVAS, window.gNavToolbox)
+
+		//* Transfer canvas control to service worker
+		// MGestWorker.post('init', this.CANVAS.transferControlToOffscreen())
 
 		this.TEST_setupScrollEvents(remove)
 	},
@@ -1095,17 +1107,15 @@ UC.MGest = {
 			DYNAMIC_TAB_BAR_BLUR_AMOUNT_PREF,
 			DEFAULT_BLUR_AMOUNT,
 			function onBlurAmountUpdate(_pref, _prevVal, newVal) {
-				// TODO validate new val
-				// TODO cannot be negative
-				const canvas = window.document.getElementById('snapshotCanvas')
-				if (canvas) {
-					console.log('Updated Blur Amount', newVal)
-					canvas.style.filter = `blur(${newVal}px)`
-				} else {
-					console.error(
-						'Updated Blur Amount failed due to canvas element missing!'
-					)
-				}
+				const MAX_BLUR_AMOUNT = 100
+				let numericValue = Number(newVal)
+				let clamp = Math.max(0, Math.min(Number(numericValue), MAX_BLUR_AMOUNT))
+
+				console.log(
+					`Updated Blur Amount: ${clamp}\n |${numericValue}| <= ${MAX_BLUR_AMOUNT}`
+				)
+
+				return clamp
 			}
 		)
 
@@ -1151,7 +1161,7 @@ UC.MGest = {
 			}
 
 			// Ignore event of other browsers tabs
-			if (window.gBrowser.selectedBrowser !== aBrowser) {
+			if (window.gBrowser.selectedBrowser != aBrowser) {
 				console.info('Ignoring event onLocationChange of browser', aBrowser)
 				return
 			}
@@ -1243,10 +1253,12 @@ UC.MGest = {
 
 	receiveMessage: function (msg) {
 		const aTab = msg.target
+		const isDevTools = aTab.src == 'about:devtools-toolbox'
+
 		console.debug(`[EVENT - ${msg.name}] Mousegeestures.uc.js`, aTab, msg)
 
-		// Ignore if it's not the selected
-		if (!this.CANVAS || aTab != gBrowser.selectedBrowser) return
+		// Ignore devtools or if tabis not the selected one
+		if (aTab != window.gBrowser.selectedBrowser || isDevTools) return
 
 		// Always set the latest dimensions for the tab
 		this.setTabBuffer(aTab, 'rect', msg.data.screen)
@@ -1325,8 +1337,8 @@ UC.MGest = {
 
 	//* destroy() should be called uninit() as any file that is loaded into the browser window scope?
 	destroy: function () {
-		ChromeUtils.unregisterWindowActor('MGest')
 		Services.obs.removeObserver(this, 'UCJS:WebExtLoaded')
+		if (this._mainResizeObserver) this._mainResizeObserver.disconnect()
 		window.gBrowser.removeTabsProgressListener(this.tabProgressListener)
 		window.messageManager.removeMessageListener('DynamicTabBar:TabReady', this)
 		window.messageManager.removeMessageListener(
@@ -1339,6 +1351,7 @@ UC.MGest = {
 		this._cachedBuffers.clear()
 		EventTracker.destroy()
 		this.initializeElements(true)
+		MGestWorker.post('close')
 		delete UC.MGest
 	},
 }
