@@ -363,7 +363,7 @@ UC.MGest = {
 			cropped = true
 		}
 		if (width > BrowserWidth) {
-			console.info('[OPTIMIZATION] Rect exceeding browser width')
+			console.info('⚡ [OPTIMIZATION] Rect exceeding browser width')
 			//* TEMP FIX
 			//* Use the total screen width instead the rect width, this is because absolute/relative positioning may break the screenshot dimensions
 			width = BrowserWidth
@@ -372,14 +372,14 @@ UC.MGest = {
 
 		if (height <= BrowserHeight) {
 			console.info(
-				'[OPTIMIZATION] Rect fit only toolbar, only taking screenshot of toolbar height'
+				'⚡ [OPTIMIZATION] Rect fit only toolbar, only taking screenshot of toolbar height'
 			)
 			height = ToolbarHeight
 			rect.skipSetDimensions = true
 		} else if (height >= BrowserHeight) {
 			// TODO: add a tiny space to account for infinite scrolling
 			console.info(
-				'[OPTIMIZATION] Removing window - toolbar height of screenshot'
+				'⚡ [OPTIMIZATION] Removing window - toolbar height of screenshot'
 			)
 			height = Math.max(height - BrowserHeight + ToolbarHeight * 2, 0)
 		}
@@ -433,10 +433,8 @@ UC.MGest = {
 		)
 
 		if (!region.skipSetDimensions) {
-			Object.assign(this.CANVAS, {
-				// width: region.width * scale,
-				height: region.height * scale,
-			})
+			// this.CANVAS.width = region.width * scale
+			this.CANVAS.height = region.height * scale
 		} else {
 			console.info(
 				'Ignoring draw request as content is only toolbar height\n',
@@ -491,18 +489,32 @@ UC.MGest = {
 
 				let left = Math.floor((startLeft - region.left) * scale)
 				let top = Math.floor((startTop - region.top) * scale)
-				ctx.drawImage(
-					snapshot,
-					left - (left % snapshotSize) + xContentOffset, // Start drawing after the sidebar (if any)
-					top - (top % snapshotSize) + yContentOffset, // Start drawing after the toolbar height
-					Math.floor(width * scale),
-					Math.floor(height * scale)
-				)
-				snapshot.close()
+				left = left - (left % snapshotSize) + xContentOffset // Start drawing after the sidebar (if any)
+				top = top - (top % snapshotSize) + yContentOffset // Start drawing after the toolbar height
 
-				//* Debug
-				let startDrawTimeEnd = window.performance.now()
-				console.log(`Draw Time took: ${startDrawTimeEnd - startDrawTime}ms`)
+				let data = [
+					aTab.browserId, // Track ID
+					snapshot,
+					this.DYNAMIC_TAB_BAR_BLUR_AMOUNT, // blur amount to use in ctx.filter
+				]
+				MGestWorker.post('paintCanvas', data)
+					.then(function (responseBitmap) {
+						ctx.drawImage(
+							responseBitmap,
+							left,
+							top,
+							Math.floor(width * scale),
+							Math.floor(height * scale)
+						)
+						responseBitmap.close()
+					})
+					.finally(() => {
+						snapshot.close()
+
+						//* Debug
+						let startDrawTimeEnd = window.performance.now()
+						console.log(`Draw Time took: ${startDrawTimeEnd - startDrawTime}ms`)
+					})
 			}
 		}
 
@@ -529,9 +541,12 @@ UC.MGest = {
 		// this._tabProcessingQueue.set(tabRef, 'abortSignal', signal)
 		this._tabProcessingQueue.set(tabRef, 'processing')
 
+		window.performance.mark('Screenshot Start')
+
 		this._dynamicScreenshot(...arguments).finally(() => {
 			console.log('Removing tab of processing queue:', tabRef)
 			this._tabProcessingQueue.delete(tabRef)
+			window.performance.mark('Screenshot End')
 		})
 	},
 
@@ -784,9 +799,7 @@ UC.MGest = {
 				const { TBwidth } = this.getDimensions(true)
 
 				window.requestAnimationFrame(() => {
-					Object.assign(this.CANVAS, {
-						width: TBwidth * scale,
-					})
+					this.CANVAS.width = TBwidth * scale
 				})
 
 				this.dynamicScreenshot(true)
@@ -831,9 +844,12 @@ UC.MGest = {
 		this._mainResizeObserver = new window.ResizeObserver(
 			// TODO: cancel painting and debounce resize
 			async function ([entry]) {
-				await new Promise((r) => window.requestAnimationFrame(r))
-
-				console.log('Resize observer trigger!', entry)
+				await window.promiseDocumentFlushed(
+					function () {
+						console.log('Resize observer trigger!', entry)
+						this.getDimensions(true)
+					}.bind(this)
+				)
 				this.dynamicScreenshot(true)
 			}.bind(this)
 		)
@@ -957,8 +973,9 @@ UC.MGest = {
 			if (this.CANVAS) {
 				const value = slider.value
 				sliderValue.textContent = value
-				this.CANVAS.style.transform = `translateY(-${value}px)`
-				//console.log('Slider value changed to:', value)
+				this.CANVAS.animate([{ transform: `translateY(-${value}px)` }], {
+					fill: 'forwards',
+				})
 			}
 		}
 
@@ -970,7 +987,6 @@ UC.MGest = {
 	 * Get/Remove all the elements that will be used.
 	 */
 	initializeElements: function (remove = false) {
-		// TODO: initialize canvas here as we will need some events to be set on setupDynamicListeners()
 		this.initializeStyles(remove)
 		const canvasID = 'snapshotCanvas'
 		this.CANVAS = window.document.getElementById(canvasID)
@@ -1243,7 +1259,7 @@ UC.MGest = {
 
 		window.gBrowser.addTabsProgressListener(
 			this.tabProgressListener,
-			Ci.nsIWebProgress.NOTIFY_STATE_ALL
+			Ci.nsIWebProgress.NOTIFY_STATE_ALL //* https://searchfox.org/mozilla-central/source/uriloader/base/nsIWebProgressListener.idl
 		)
 		Services.obs.addObserver(this, 'UCJS:WebExtLoaded')
 
@@ -1274,15 +1290,19 @@ UC.MGest = {
 			case 'DynamicTabBar:Scroll': {
 				const { scrollY, scrollX, width, height, top, left } = msg.data.screen
 				const scrollPosition = scrollY || 0
-				window.requestAnimationFrame(() => {
-					this.CANVAS.style.transform = `translateY(-${scrollPosition}px)`
-				})
+
+				const keyframes = [{ transform: `translateY(-${scrollPosition}px)` }]
+				const options = {
+					fill: 'forwards', // Keep the final state after animation ends
+				}
+
+				this.CANVAS.animate(keyframes, options)
+
 				break
 			}
 		}
 	},
 
-	_debounceScrollRef: null,
 	exec: function (win) {
 		const { customElements, document, gBrowser } = win
 		console.log('EXEC!', this, win, customElements, document, gBrowser, {
@@ -1292,9 +1312,8 @@ UC.MGest = {
 
 		const mm = window.messageManager
 
-		this._debounceScrollRef = this.debounce(this.receiveMessage.bind(this), 2)
 		mm.addMessageListener('DynamicTabBar:TabReady', this)
-		mm.addMessageListener('DynamicTabBar:Scroll', this._debounceScrollRef)
+		mm.addMessageListener('DynamicTabBar:Scroll', this)
 		mm.loadFrameScript(
 			'resource://userchromejs/mouseGestures/MGestParent.sys.mjs',
 			true
@@ -1341,10 +1360,7 @@ UC.MGest = {
 		if (this._mainResizeObserver) this._mainResizeObserver.disconnect()
 		window.gBrowser.removeTabsProgressListener(this.tabProgressListener)
 		window.messageManager.removeMessageListener('DynamicTabBar:TabReady', this)
-		window.messageManager.removeMessageListener(
-			'DynamicTabBar:Scroll',
-			this._debounceScrollRef
-		)
+		window.messageManager.removeMessageListener('DynamicTabBar:Scroll', this)
 		window.messageManager.removeDelayedFrameScript(
 			'resource://userchromejs/mouseGestures/MGestParent.sys.mjs'
 		)

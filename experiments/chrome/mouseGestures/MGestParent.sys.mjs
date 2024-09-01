@@ -1,3 +1,32 @@
+/* eslint-env mozilla/frame-script */
+
+function debounce(func, wait, scope) {
+	let timer = null
+
+	function clearTimer(resetTimer = false) {
+		if (timer) {
+			content.clearTimeout(timer)
+		}
+		if (resetTimer) {
+			timer = null
+		}
+	}
+
+	const debouncedFunction = function () {
+		clearTimer()
+
+		const args = arguments
+		timer = content.setTimeout(function () {
+			timer = null
+			func.apply(scope, args)
+		}, wait)
+	}
+
+	debouncedFunction.cancel = clearTimer.bind(null, true)
+
+	return debouncedFunction
+}
+
 function getDimensions(window) {
 	const {
 		innerHeight,
@@ -53,7 +82,7 @@ function getDimensions(window) {
 
 addEventListener(
 	'scroll',
-	function (event) {
+	debounce(function (event) {
 		console.debug('addEventListener:', event, this)
 		const window = content
 
@@ -61,23 +90,12 @@ addEventListener(
 
 		const data = {
 			screen: getDimensions(window),
-			/*{
-				scrollY,
-				scrollX,
-				width: offsetWidth,
-				height: offsetHeight,
-				top: offsetTop,
-				left: offsetLeft,
-				// right: scrollMinX + scrollWidth,
-				// bottom: scrollMinY + scrollHeight,
-			},*/
 			lastKnownScrollPosition: scrollY,
 		}
 
 		sendAsyncMessage('DynamicTabBar:Scroll', data)
-	},
+	}, 2),
 	{
-		useCapture: false,
 		passive: true,
 	}
 )
@@ -97,7 +115,7 @@ addEventListener(
 			this
 		)
 
-		// Some tabs like about: ones don't return the window object
+		// Some tabs like about: ones don't return the window
 		let data = null
 		if (window) {
 			// Took script from Adaptive-Tab-Bar-Colour extension: https://github.com/easonwong-de/Adaptive-Tab-Bar-Colour/blob/main/content_script.js#L266
@@ -122,8 +140,6 @@ addEventListener(
 		sendAsyncMessage('DynamicTabBar:TabReady', data)
 	},
 	{
-		capture: true,
-		useCapture: true,
 		passive: true,
 	}
 )
